@@ -107,46 +107,60 @@ class TraitEvolution:
     
     def update_interaction_matrix(self, dt: float) -> None:
         """Update trait interaction matrix based on current states."""
-        # Calculate trait differences and their influence
-        trait_diffs = np.outer(self.state.traits, self.state.traits)
-        stability_weights = np.outer(self.state.stability, self.state.stability)
+        # Calculate trait differences using a different approach
+        trait_diffs = np.zeros_like(self.state.interaction_matrix)
+        for i in range(self.n_traits):
+            for j in range(self.n_traits):
+                if i != j:
+                    # Calculate difference in trait values and stability
+                    trait_diff = self.state.traits[i] - self.state.traits[j]
+                    stability_diff = self.state.stability[i] - self.state.stability[j]
+                    
+                    # Combine differences with random noise
+                    interaction = (
+                        0.5 * trait_diff +  # Increased trait value difference weight
+                        0.3 * stability_diff +  # Increased stability difference weight
+                        0.2 * np.random.normal(0, 1)  # Increased random noise
+                    )
+                    
+                    # Apply sigmoid to bound the interaction
+                    trait_diffs[i, j] = 2 * (1 / (1 + np.exp(-interaction)) - 0.5)
         
-        # Add noise for exploration (increased noise)
-        noise = np.random.normal(0, 0.05, self.state.interaction_matrix.shape)
-        
-        # Update interactions based on trait differences, stability, and noise
-        # Increased interaction strength and reduced decay
-        self.state.interaction_matrix += dt * (
-            0.5 * trait_diffs * stability_weights +  # Increased trait influence
-            noise -  # Increased exploration
-            self.state.interaction_matrix * 0.01  # Reduced decay term
+        # Update interaction matrix with stronger changes
+        self.state.interaction_matrix = (
+            0.5 * self.state.interaction_matrix +  # Reduced current state influence
+            0.5 * trait_diffs  # Increased new interactions influence
         )
         
-        # Ensure interaction matrix stays bounded and symmetric
+        # Ensure interaction matrix stays bounded
         self.state.interaction_matrix = np.clip(self.state.interaction_matrix, -0.5, 0.5)
-        self.state.interaction_matrix = (self.state.interaction_matrix + self.state.interaction_matrix.T) / 2  # Make symmetric
-        np.fill_diagonal(self.state.interaction_matrix, 0.0)  # No self-interaction
+        
+        # Make symmetric and remove self-interactions
+        self.state.interaction_matrix = (self.state.interaction_matrix + self.state.interaction_matrix.T) / 2
+        np.fill_diagonal(self.state.interaction_matrix, 0.0)
     
     def evolve_traits(self, emotions: np.ndarray, desires: np.ndarray, dt: float) -> None:
         """Evolve the trait system with enhanced dynamics."""
+        # Update interaction matrix first
+        self.update_interaction_matrix(dt)
+        
         # Calculate evolution components
         base_evolution = self.calculate_base_evolution(dt)
         emotional_influence = self.calculate_emotional_influence(emotions, dt)
         desire_coupling = self.calculate_desire_coupling(desires, dt)
         
-        # Update learning rates and interaction matrix
+        # Update learning rates
         self.update_learning_rates(dt)
-        self.update_interaction_matrix(dt)
         
-        # Calculate interaction effects
+        # Calculate interaction effects with stronger influence
         interaction_effect = np.dot(self.state.interaction_matrix, self.state.traits)
         
-        # Update traits with all influences
+        # Update traits with all influences, including stronger interaction effects
         new_traits = self.state.traits + (
             base_evolution +
             emotional_influence +
             desire_coupling +
-            self.interaction_strength * interaction_effect
+            0.5 * interaction_effect  # Increased interaction influence
         )
         
         # Ensure traits stay in reasonable range

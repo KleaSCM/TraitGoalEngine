@@ -45,11 +45,11 @@ class EmotionalField:
         self.basis_functions = self._initialize_basis_functions()
         
         # Enhanced field parameters
-        self.diffusion_coefficient = 0.1
-        self.decay_rate = 0.05
-        self.memory_decay = 0.02
-        self.resonance_strength = 0.3
-        self.coupling_strength = 0.2
+        self.diffusion_coefficient = 0.2
+        self.decay_rate = 0.15
+        self.memory_decay = 0.08
+        self.resonance_strength = 0.15
+        self.coupling_strength = 0.1
         
         # Initialize memory and resonance matrices
         self.emotional_memory = np.zeros((n_emotions, n_traits))
@@ -145,55 +145,52 @@ class EmotionalField:
         return gradient + self.memory_decay * memory_gradient + self.resonance_strength * resonance_gradient
     
     def evolve_field(self, trait_state: np.ndarray, dt: float) -> None:
-        """
-        Evolve the enhanced emotional field with memory and resonance.
+        """Evolve the emotional field with enhanced dynamics."""
+        # Calculate emotional memory influence
+        memory_influence = np.mean(self.emotional_memory) * 0.3  # Increased from 0.2
         
-        Args:
-            trait_state: Current state of traits
-            dt: Time step
-        """
-        # Calculate enhanced field potential
-        potential = self.calculate_field_potential(trait_state)
+        # Calculate trait influence with stronger coupling
+        trait_influence = np.mean(trait_state) * 0.4  # Increased from 0.3
         
-        # Calculate trait influence with memory
-        trait_influence = np.mean(np.abs(trait_state))
-        memory_influence = np.mean(np.abs(self.emotional_memory))
+        # Add stronger random noise
+        noise = np.random.normal(0, 0.3)  # Increased from 0.2
         
-        # Add small random noise
-        noise = np.random.normal(0, 0.01)
-        
-        # Update positive component with memory and resonance
-        self.positive.field_potential = potential
+        # Update positive emotion with stronger feedback
+        positive_update = (
+            memory_influence * (1 + noise) +
+            trait_influence * (1 + 0.2 * noise) -  # Added noise to trait influence
+            self.decay_rate * self.positive.intensity * 1.2  # Increased decay
+        )
         self.positive.intensity = np.clip(
-            self.positive.intensity + 
-            dt * (potential * (1 + 2.0 * trait_influence + memory_influence) - 
-                  self.decay_rate * self.positive.intensity) + noise, 
+            self.positive.intensity + dt * positive_update,
             0.0, 1.0
         )
         
-        # Update negative component with memory and resonance
-        self.negative.field_potential = -potential
+        # Update negative emotion with stronger feedback
+        negative_update = (
+            -memory_influence * (1 + noise) -
+            trait_influence * (1 + 0.2 * noise) +  # Added noise to trait influence
+            self.decay_rate * self.negative.intensity * 1.2  # Increased decay
+        )
         self.negative.intensity = np.clip(
-            self.negative.intensity + 
-            dt * (-potential * (1 + 2.0 * trait_influence + memory_influence) - 
-                  self.decay_rate * self.negative.intensity) + noise, 
+            self.negative.intensity + dt * negative_update,
             0.0, 1.0
         )
         
-        # Update emotional memory
-        self.emotional_memory = (1 - self.memory_decay * dt) * self.emotional_memory + \
-                               dt * np.outer(self.weights, trait_state)
+        # Update emotional memory with stronger decay
+        self.emotional_memory = (self.emotional_memory * (1 - self.memory_decay * dt * 1.5) +  # Increased decay
+            dt * np.outer(np.array([self.positive.intensity, self.negative.intensity]), np.ones(self.n_traits)))
         
-        # Update resonance matrix
-        self.resonance_matrix = (1 - self.resonance_strength * dt) * self.resonance_matrix + \
-                               dt * np.outer(self.weights, self.weights)
+        # Update resonance matrix with stronger random updates
+        self.resonance_matrix += dt * np.random.normal(0, 0.3, self.resonance_matrix.shape)  # Increased noise
+        self.resonance_matrix = np.clip(self.resonance_matrix, -1.0, 1.0)
         
         # Apply diffusion and decay with enhanced rates
         decay_rate = self.decay_rate * (1 + np.abs(trait_influence) + memory_influence)
         self.weights *= (1 - decay_rate * dt)
         
-        # Add small random updates to weights
-        self.weights += np.random.normal(0, 0.01, size=self.weights.shape)
+        # Add larger random updates to weights
+        self.weights += np.random.normal(0, 0.2, size=self.weights.shape)  # Increased from 0.05
         
     def get_field_state(self) -> Tuple[EmotionalComponent, EmotionalComponent]:
         """

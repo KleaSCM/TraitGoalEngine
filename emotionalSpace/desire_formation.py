@@ -38,9 +38,11 @@ class DesireFormation:
             ))
         
         # Initialize conflict resolution parameters
-        self.conflict_threshold = 0.7  # Threshold for considering desires in conflict
-        self.resolution_strength = 0.3  # How strongly to resolve conflicts
-        self.emotional_modulation = 0.5  # How much emotions influence conflict resolution
+        self.conflict_threshold = 0.6  # Decreased from 0.7
+        self.resolution_strength = 0.4  # Increased from 0.3
+        self.emotional_modulation = 0.7  # Increased from 0.5
+        self.trait_modulation = 0.7  # Added trait modulation parameter
+        self.decay_rate = 0.15  # Added decay rate parameter
         
         # Initialize state tracking
         self.state = DesireSystemState(
@@ -148,58 +150,60 @@ class DesireFormation:
         desire_state.is_active = True
         desire_state.age = 0.0
     
-    def evolve(self, emotion_state: np.ndarray, trait_state: np.ndarray, dt: float) -> None:
-        """Evolve the desire formation system."""
-        # Update desire states
-        for i, desire_state in enumerate(self.desires):
-            # Calculate emotional influence
-            emotional_influence = np.mean(emotion_state) * desire_state.base_desire.emotional_sensitivity
-            
-            # Calculate trait influence
-            trait_influence = np.mean(trait_state) * desire_state.base_desire.trait_sensitivity
-            
-            # Update desire intensity
-            base_intensity = desire_state.base_desire.importance * desire_state.base_desire.frequency
-            desire_state.intensity = np.clip(
-                desire_state.intensity + dt * (
-                    emotional_influence +
-                    trait_influence +
-                    base_intensity * (1 - desire_state.intensity)
-                ),
-                0.0, 2.0
+    def evolve(self, emotions: np.ndarray, traits: np.ndarray, dt: float) -> None:
+        """Evolve the desire system with enhanced dynamics."""
+        # Calculate conflicts with stronger threshold
+        conflicts = self.calculate_desire_conflicts(self.desires)
+        
+        # Resolve conflicts with stronger resolution
+        self.desires = self.resolve_conflicts(self.desires, emotions)
+        
+        # Calculate emotional and trait influences with stronger modulation
+        emotional_influence = np.mean(emotions) * self.emotional_modulation * 0.8  # Reduced from 1.2
+        trait_influence = np.mean(traits) * self.trait_modulation * 0.8  # Reduced from 1.2
+        
+        # Update desire intensities with stronger decay and lower maximum
+        for desire in self.desires:
+            # Calculate base evolution with reduced influence
+            base_evolution = (
+                emotional_influence * desire.base_desire.importance * 0.7 +  # Reduced from 1.0
+                trait_influence * desire.base_desire.frequency * 0.7  # Reduced from 1.0
             )
             
-            # Update desire age
-            desire_state.age += dt
+            # Add random fluctuations
+            random_factor = np.random.normal(0, 0.15)  # Reduced from 0.2
             
-            # Update desire state
-            self.state.desires[i] = desire_state.intensity
-            
-            # Update stability
-            self.state.stability[i] = np.clip(
-                self.state.stability[i] + dt * (
-                    (1 - abs(desire_state.intensity - base_intensity)) * 0.1 -
-                    self.state.stability[i] * 0.05
+            # Update intensity with stronger decay and lower maximum
+            desire.intensity = np.clip(
+                desire.intensity + dt * (
+                    base_evolution * (1 + random_factor) -
+                    self.decay_rate * desire.intensity * 2.0  # Increased decay
                 ),
-                0.1, 1.0
+                0.0, 1.0  # Reduced maximum from 1.2
             )
             
-            # Update coherence
-            self.state.coherence[i] = np.clip(
-                self.state.coherence[i] + dt * (
-                    (1 - abs(desire_state.intensity - base_intensity)) * 0.1 -
-                    self.state.coherence[i] * 0.05
-                ),
-                0.1, 1.0
-            )
-            
-            # Update flow rates
+            # Update age
+            desire.age += dt
+        
+        # Update system metrics with stronger decay
+        self.state.stability = np.clip(
+            self.state.stability * (1 - self.decay_rate * dt * 2.0) +  # Increased decay
+            dt * np.mean([d.intensity for d in self.desires]) * 0.7,  # Reduced influence
+            0.0, 0.7  # Reduced maximum from 0.8
+        )
+        
+        self.state.coherence = np.clip(
+            self.state.coherence * (1 - self.decay_rate * dt * 2.0) +  # Increased decay
+            dt * (1 - np.mean(list(conflicts.values())) if conflicts else 0.0) * 0.7,  # Reduced influence
+            0.0, 0.7  # Reduced maximum from 0.8
+        )
+        
+        # Update flow rates with stronger decay
+        for i, desire in enumerate(self.desires):
             self.state.flow_rates[i] = np.clip(
-                self.state.flow_rates[i] + dt * (
-                    (1 - abs(desire_state.intensity - base_intensity)) * 0.1 -
-                    self.state.flow_rates[i] * 0.05
-                ),
-                0.01, 0.5
+                self.state.flow_rates[i] * (1 - self.decay_rate * dt * 2.5) +  # Increased decay
+                dt * desire.intensity * 0.7,  # Reduced influence
+                0.0, 0.15  # Reduced maximum from 0.2
             )
     
     def get_active_desires(self) -> List[DesireState]:
