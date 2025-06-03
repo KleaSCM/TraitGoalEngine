@@ -107,17 +107,24 @@ class TraitEvolution:
     
     def update_interaction_matrix(self, dt: float) -> None:
         """Update trait interaction matrix based on current states."""
+        # Calculate trait differences and their influence
         trait_diffs = np.outer(self.state.traits, self.state.traits)
         stability_weights = np.outer(self.state.stability, self.state.stability)
         
-        # Update interactions based on trait differences and stability
+        # Add noise for exploration (increased noise)
+        noise = np.random.normal(0, 0.05, self.state.interaction_matrix.shape)
+        
+        # Update interactions based on trait differences, stability, and noise
+        # Increased interaction strength and reduced decay
         self.state.interaction_matrix += dt * (
-            self.interaction_strength * trait_diffs * stability_weights -
-            self.state.interaction_matrix * 0.01  # Decay term
+            0.5 * trait_diffs * stability_weights +  # Increased trait influence
+            noise -  # Increased exploration
+            self.state.interaction_matrix * 0.01  # Reduced decay term
         )
         
-        # Ensure interaction matrix stays bounded
+        # Ensure interaction matrix stays bounded and symmetric
         self.state.interaction_matrix = np.clip(self.state.interaction_matrix, -0.5, 0.5)
+        self.state.interaction_matrix = (self.state.interaction_matrix + self.state.interaction_matrix.T) / 2  # Make symmetric
         np.fill_diagonal(self.state.interaction_matrix, 0.0)  # No self-interaction
     
     def evolve_traits(self, emotions: np.ndarray, desires: np.ndarray, dt: float) -> None:

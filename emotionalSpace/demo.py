@@ -13,16 +13,6 @@ def print_state(profile_system: ProfileIntegration, step: int) -> None:
     trait_state, emotion_state, desire_states = profile_system.get_profile_influenced_state()
     trait_names = list(profile_system.trait_weights.keys())
     
-    # Print trait interaction summary FIRST
-    print("Trait Interaction Summary:")
-    print("-" * 40)
-    interaction_matrix = profile_system.trait_evolution.state.interaction_matrix
-    n_traits = len(trait_names)
-    for i in range(n_traits):
-        for j in range(n_traits):
-            if i != j and abs(interaction_matrix[i, j]) > 0.1:
-                print(f"Trait {i+1} → Trait {j+1}: {interaction_matrix[i, j]:.3f}")
-    
     # Print emotions
     print("\nEmotions:")
     print("-" * 40)
@@ -70,6 +60,16 @@ def print_state(profile_system: ProfileIntegration, step: int) -> None:
     print("-" * 40)
     for key, value in profile_metrics.items():
         print(f"{key:<20}: {value:.3f}")
+    
+    # Print trait interaction summary LAST
+    print("\nTrait Interaction Summary:")
+    print("-" * 40)
+    interaction_matrix = profile_system.trait_evolution.state.interaction_matrix
+    n_traits = len(trait_names)
+    for i in range(n_traits):
+        for j in range(n_traits):
+            if i != j and abs(interaction_matrix[i, j]) > 0.1:
+                print(f"Trait {i+1} → Trait {j+1}: {interaction_matrix[i, j]:.3f}")
 
 def run_demo() -> None:
     """Run a demonstration of the emotional-trait-desire system."""
