@@ -18,35 +18,44 @@ class ProfileIntegration:
         # Get dimensions
         self.n_traits = len(self.trait_weights)
         self.n_emotions = len(profile.get_emotion_trait_correlations())
-        self.n_desires = len(profile.desires)
+        self.n_desires = len(profile.desires)  # Base desires
         
         # Initialize emotional field
         self.emotional_field = EmotionalField(
-            n_emotions=self.n_emotions,
+            n_emotions=2,  # Only using positive and negative emotions
             n_traits=self.n_traits
         )
         
-        # Initialize trait evolution
+        # Initialize trait evolution with correct number of desires
         self.trait_evolution = TraitEvolution(
             n_traits=self.n_traits,
-            n_emotions=self.n_emotions,
-            n_desires=self.n_desires
+            n_emotions=2,  # Only using positive and negative emotions
+            n_desires=self.n_desires  # Use actual number of desires
         )
         
-        # Initialize desire formation with profile desires
-        self.desire_formation = DesireFormation(profile.desires)
+        # Initialize desire formation with profile desires and turn-ons
+        self.desire_formation = DesireFormation(profile.desires, profile.turn_ons)
     
     def evolve_with_profile(self, dt: float) -> None:
         """Evolve the system with profile influence."""
         # Get current states
         trait_state = self.trait_evolution.get_trait_state().traits
-        emotion_state = self.emotional_field.get_field_state().emotions
+        positive_emotion, negative_emotion = self.emotional_field.get_field_state()
+        emotion_state = np.array([positive_emotion.intensity, negative_emotion.intensity])
+        desire_states = self.desire_formation.get_active_desires()
+        
+        # Initialize desire state with correct size
+        desire_state = np.zeros(self.n_desires)  # Use actual number of desires
+        if desire_states:
+            for i, d in enumerate(desire_states):
+                if i < self.n_desires:  # Ensure we don't exceed array bounds
+                    desire_state[i] = d.intensity
         
         # Evolve traits with profile influence
-        self.trait_evolution.evolve_traits(emotion_state, dt)
+        self.trait_evolution.evolve_traits(emotion_state, desire_state, dt)
         
         # Evolve emotions with profile influence
-        self.emotional_field.evolve_emotions(trait_state, dt)
+        self.emotional_field.evolve_field(trait_state, dt)
         
         # Evolve desires with profile influence
         self.desire_formation.evolve(emotion_state, trait_state, dt)
@@ -54,7 +63,8 @@ class ProfileIntegration:
     def get_profile_influenced_state(self) -> Tuple[np.ndarray, np.ndarray, List[DesireState]]:
         """Get the current state with profile influence."""
         trait_state = self.trait_evolution.get_trait_state().traits
-        emotion_state = self.emotional_field.get_field_state().emotions
+        positive_emotion, negative_emotion = self.emotional_field.get_field_state()
+        emotion_state = np.array([positive_emotion.intensity, negative_emotion.intensity])
         desire_states = self.desire_formation.get_active_desires()
         
         return trait_state, emotion_state, desire_states
@@ -73,7 +83,7 @@ class ProfileIntegration:
         emotion_correlations = self.profile.get_emotion_trait_correlations()
         emotion_alignment = np.mean([
             abs(emotion_state[i])
-            for i, (_, correlations) in enumerate(emotion_correlations.items())
+            for i in range(len(emotion_state))  # Only iterate over our 2 emotions
         ])
         
         # Calculate desire alignment

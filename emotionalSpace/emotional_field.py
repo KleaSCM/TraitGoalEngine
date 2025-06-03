@@ -46,9 +46,10 @@ class EmotionalField:
         
     def _initialize_basis_functions(self) -> List[callable]:
         """Initialize basis functions for field potential calculation."""
-        # Using Gaussian basis functions
-        return [lambda x, i=i: np.exp(-0.5 * np.sum((x - np.random.randn(self.n_traits))**2))
-                for i in range(self.n_emotions)]
+        # Using scaled Gaussian basis functions
+        centers = np.random.randn(self.n_emotions, self.n_traits) * 0.1  # Scale down the centers
+        return [lambda x, center=center: np.exp(-0.5 * np.sum((x - center)**2))
+                for center in centers]
     
     def calculate_field_potential(self, trait_state: np.ndarray) -> float:
         """
@@ -60,10 +61,13 @@ class EmotionalField:
         Returns:
             Field potential value
         """
+        # Normalize trait state to prevent extreme values
+        trait_state = np.clip(trait_state, -1.0, 1.0)
+        
         potential = 0.0
         for i, (weight, basis) in enumerate(zip(self.weights, self.basis_functions)):
             potential += weight * basis(trait_state)
-        return potential
+        return np.clip(potential, -1.0, 1.0)  # Clip potential to reasonable range
     
     def calculate_field_strength(self) -> float:
         """
@@ -108,21 +112,37 @@ class EmotionalField:
             trait_state: Current state of traits
             dt: Time step
         """
-        # Calculate field potential
+        # Calculate field potential with stronger trait influence
         potential = self.calculate_field_potential(trait_state)
         
-        # Update positive component
+        # Calculate trait influence on emotions with enhanced feedback
+        trait_influence = np.mean(np.abs(trait_state))  # Use absolute values for stronger influence
+        
+        # Add small random noise to prevent getting stuck
+        noise = np.random.normal(0, 0.01)
+        
+        # Update positive component with stronger feedback and noise
         self.positive.field_potential = potential
-        self.positive.intensity = np.clip(self.positive.intensity + 
-                                        dt * (potential - self.positive.intensity), 0.0, 1.0)
+        self.positive.intensity = np.clip(
+            self.positive.intensity + 
+            dt * (potential * (1 + 2.0 * trait_influence) - self.decay_rate * self.positive.intensity) + noise, 
+            0.0, 1.0
+        )
         
-        # Update negative component
+        # Update negative component with stronger feedback and noise
         self.negative.field_potential = -potential
-        self.negative.intensity = np.clip(self.negative.intensity + 
-                                        dt * (-potential - self.negative.intensity), 0.0, 1.0)
+        self.negative.intensity = np.clip(
+            self.negative.intensity + 
+            dt * (-potential * (1 + 2.0 * trait_influence) - self.decay_rate * self.negative.intensity) + noise, 
+            0.0, 1.0
+        )
         
-        # Apply diffusion and decay
-        self.weights *= (1 - self.decay_rate * dt)
+        # Apply diffusion and decay with trait-dependent rate
+        decay_rate = self.decay_rate * (1 + np.abs(trait_influence))
+        self.weights *= (1 - decay_rate * dt)
+        
+        # Add small random updates to weights to prevent stagnation
+        self.weights += np.random.normal(0, 0.01, size=self.weights.shape)
         
     def get_field_state(self) -> Tuple[EmotionalComponent, EmotionalComponent]:
         """

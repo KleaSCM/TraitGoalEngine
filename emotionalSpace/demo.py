@@ -12,7 +12,8 @@ def print_state(step: int, trait_state: np.ndarray, emotion_state: np.ndarray, d
     # Print emotions
     print("\nEmotions:")
     print("-" * 40)
-    for i, (emotion, correlations) in enumerate(PROFILE.get_emotion_trait_correlations().items()):
+    emotions = ["positive", "negative"]
+    for i, emotion in enumerate(emotions):
         print(f"{emotion:10}: {emotion_state[i]:.3f}")
     
     # Print traits

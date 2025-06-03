@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
 from enum import Enum
+import numpy as np
 
 class Gender(Enum):
     FEMALE = "female"
@@ -56,6 +57,15 @@ class Desire:
     category: str
     importance: float = 1.0  # How important this desire is
     frequency: float = 1.0  # How often this desire is felt
+    emotion_weights: np.ndarray = None  # Weights for emotional influence
+    trait_weights: np.ndarray = None  # Weights for trait influence
+    
+    def __post_init__(self):
+        # Initialize default weights if not provided
+        if self.emotion_weights is None:
+            self.emotion_weights = np.array([0.5, 0.5])  # Equal weights for positive/negative emotions
+        if self.trait_weights is None:
+            self.trait_weights = np.ones(17) / 17  # Equal weights for all traits
 
 @dataclass
 class PersonalProfile:

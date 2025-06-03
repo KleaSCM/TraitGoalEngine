@@ -5,10 +5,10 @@ from dataclasses import dataclass
 @dataclass
 class TraitState:
     """Represents the state of traits in the system."""
-    traits: np.ndarray  # τ ∈ ℝ^n
-    plasticity: np.ndarray  # P ∈ ℝ^(n×n)
+    traits: np.ndarray  # w ∈ ℝ^n
     coupling_strength: np.ndarray  # C ∈ ℝ^(n×m)
-    stability: float  # s ∈ [0, 1]
+    stability: np.ndarray  # s ∈ [0, 1]^n
+    influence: np.ndarray  # I ∈ [0, 1]^n
 
 class TraitEvolution:
     """Implements the trait evolution dynamics as defined in section 28 of the framework."""
@@ -26,20 +26,24 @@ class TraitEvolution:
         self.n_emotions = n_emotions
         self.n_desires = n_desires
         
-        # Initialize trait state
+        # Initialize base trait weights (these will never decrease)
+        self.base_trait_weights = np.ones(n_traits)  # All traits start at base weight 1.0
+        
+        # Initialize trait state with correct dimensions
+        total_coupling_dim = n_emotions + n_desires  # Total dimensions for emotions + desires
         self.state = TraitState(
-            traits=np.random.randn(n_traits),
-            plasticity=np.eye(n_traits) * 0.1,
-            coupling_strength=np.random.randn(n_traits, n_emotions + n_desires) * 0.1,
-            stability=1.0
+            traits=np.ones(n_traits),  # Start with neutral traits
+            coupling_strength=np.random.randn(n_traits, total_coupling_dim) * 0.1,  # Correct dimensions
+            stability=np.ones(n_traits) * 0.8,  # High initial stability
+            influence=np.ones(n_traits) * 0.5   # Moderate initial influence
         )
         
         # Evolution parameters
-        self.base_evolution_rate = 0.01
-        self.emotional_influence_rate = 0.05
-        self.desire_coupling_rate = 0.05
-        self.plasticity_decay = 0.001
-        
+        self.learning_rate = 0.01
+        self.stability_decay = 0.001
+        self.influence_growth = 0.002
+        self.desire_coupling_rate = 0.05  # Rate at which desires influence traits
+    
     def calculate_trait_metric(self, traits1: np.ndarray, traits2: np.ndarray) -> float:
         """
         Calculate the trait metric as defined in section 28.1.
@@ -76,7 +80,7 @@ class TraitEvolution:
         Returns:
             Evolution vector
         """
-        return self.base_evolution_rate * dt * self.state.traits
+        return self.learning_rate * dt * self.state.traits
     
     def calculate_emotional_influence(self, emotions: np.ndarray, dt: float) -> np.ndarray:
         """
@@ -89,7 +93,7 @@ class TraitEvolution:
         Returns:
             Emotional influence vector
         """
-        return self.emotional_influence_rate * dt * np.dot(
+        return self.influence_growth * dt * np.dot(
             self.state.coupling_strength[:, :self.n_emotions],
             emotions
         )
@@ -105,47 +109,26 @@ class TraitEvolution:
         Returns:
             Desire coupling vector
         """
+        # Ensure desires array has the correct length
+        if len(desires) != self.n_desires:
+            raise ValueError(f"Desires array length {len(desires)} does not match n_desires {self.n_desires}")
+            
         return self.desire_coupling_rate * dt * np.dot(
-            self.state.coupling_strength[:, self.n_emotions:],
+            self.state.coupling_strength[:, self.n_emotions:self.n_emotions + self.n_desires],
             desires
         )
     
-    def update_plasticity(self, dt: float) -> None:
+    def calculate_stability(self) -> np.ndarray:
         """
-        Update the plasticity matrix as defined in section 28.3.
-        
-        Args:
-            dt: Time step
-        """
-        # Calculate plasticity evolution
-        plasticity_evolution = -self.plasticity_decay * dt * self.state.plasticity
-        
-        # Update plasticity matrix
-        self.state.plasticity += plasticity_evolution
-        
-        # Ensure positive definiteness
-        eigenvalues = np.linalg.eigvals(self.state.plasticity)
-        if np.any(eigenvalues < 0):
-            self.state.plasticity = np.dot(
-                self.state.plasticity,
-                self.state.plasticity.T
-            )
-    
-    def calculate_stability(self) -> float:
-        """
-        Calculate the stability measure as defined in section 28.5.
+        Calculate the stability measure for each trait.
         
         Returns:
-            Stability measure
+            Array of stability measures
         """
-        # Calculate Lyapunov function
-        V = 0.5 * np.sum(self.state.traits**2)
-        
-        # Calculate stability based on eigenvalues of plasticity matrix
-        eigenvalues = np.linalg.eigvals(self.state.plasticity)
-        stability = np.exp(-np.mean(np.abs(eigenvalues)))
-        
-        return np.clip(stability, 0.0, 1.0)
+        # Calculate stability based on trait values and influence
+        stability = self.state.stability * (1 - self.stability_decay)
+        stability = np.clip(stability, 0.0, 1.0)
+        return stability
     
     def evolve_traits(self, emotions: np.ndarray, desires: np.ndarray, dt: float) -> None:
         """
@@ -156,16 +139,22 @@ class TraitEvolution:
             desires: Current desire state
             dt: Time step
         """
-        # Calculate evolution components
+        # Calculate evolution components with enhanced feedback
         base_evolution = self.calculate_base_evolution(dt)
+        
+        # Emotional influence with desire modulation
         emotional_influence = self.calculate_emotional_influence(emotions, dt)
+        desire_modulation = np.mean(desires) if len(desires) > 0 else 0.0
+        emotional_influence *= (1 + desire_modulation)  # Desires amplify emotional influence
+        
+        # Desire coupling with emotional modulation
         desire_coupling = self.calculate_desire_coupling(desires, dt)
+        emotion_modulation = np.mean(np.abs(emotions))
+        desire_coupling *= (1 + emotion_modulation)  # Emotions amplify desire influence
         
-        # Update traits
-        self.state.traits += base_evolution + emotional_influence + desire_coupling
-        
-        # Update plasticity
-        self.update_plasticity(dt)
+        # Update traits with feedback, ensuring they never go below base weights
+        new_traits = self.state.traits + base_evolution + emotional_influence + desire_coupling
+        self.state.traits = np.maximum(new_traits, self.base_trait_weights)
         
         # Update stability
         self.state.stability = self.calculate_stability()
