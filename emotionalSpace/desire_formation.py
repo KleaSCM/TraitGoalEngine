@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Dict
 from dataclasses import dataclass
 from .personal_profile import Desire, TurnOn
 
@@ -49,6 +49,88 @@ class DesireFormation:
                     decay_rate=0.01,
                     is_active=True
                 ))
+        
+        # Initialize conflict resolution parameters
+        self.conflict_threshold = 0.7  # Threshold for considering desires in conflict
+        self.resolution_strength = 0.3  # How strongly to resolve conflicts
+        self.emotional_modulation = 0.5  # How much emotions influence conflict resolution
+    
+    def calculate_desire_conflicts(self, desire_states: List[DesireState]) -> Dict[Tuple[int, int], float]:
+        """
+        Calculate conflicts between desires based on their categories and intensities.
+        
+        Args:
+            desire_states: List of active desire states
+            
+        Returns:
+            Dictionary mapping desire pairs to conflict scores
+        """
+        conflicts = {}
+        n_desires = len(desire_states)
+        
+        for i in range(n_desires):
+            for j in range(i + 1, n_desires):
+                d1, d2 = desire_states[i], desire_states[j]
+                
+                # Calculate base conflict score
+                conflict_score = 0.0
+                
+                # Category-based conflicts
+                if d1.base_desire.category == d2.base_desire.category:
+                    # Same category desires compete for attention
+                    conflict_score += 0.3
+                
+                # Intensity-based conflicts
+                intensity_diff = abs(d1.intensity - d2.intensity)
+                conflict_score += 0.2 * (1 - intensity_diff)
+                
+                # Special handling for sexual vs non-sexual desires
+                if (d1.base_desire.category == "Sexual & Intimate") != (d2.base_desire.category == "Sexual & Intimate"):
+                    conflict_score += 0.4  # Higher conflict between sexual and non-sexual desires
+                
+                if conflict_score > self.conflict_threshold:
+                    conflicts[(i, j)] = conflict_score
+        
+        return conflicts
+    
+    def resolve_conflicts(self, desire_states: List[DesireState], emotion_state: np.ndarray) -> List[DesireState]:
+        """
+        Resolve conflicts between desires based on emotions and traits.
+        
+        Args:
+            desire_states: List of active desire states
+            emotion_state: Current emotional state
+            
+        Returns:
+            Updated list of desire states
+        """
+        conflicts = self.calculate_desire_conflicts(desire_states)
+        
+        for (i, j), conflict_score in conflicts.items():
+            d1, d2 = desire_states[i], desire_states[j]
+            
+            # Calculate emotional influence on conflict resolution
+            positive_emotion = emotion_state[0]
+            negative_emotion = emotion_state[1]
+            emotion_modulation = positive_emotion - negative_emotion
+            
+            # Resolve conflict based on emotions and base intensities
+            if emotion_modulation > 0:
+                # Positive emotions favor higher base intensity desires
+                if d1.base_desire.importance * d1.base_desire.frequency > d2.base_desire.importance * d2.base_desire.frequency:
+                    d2.intensity *= (1 - self.resolution_strength * conflict_score)
+                else:
+                    d1.intensity *= (1 - self.resolution_strength * conflict_score)
+            else:
+                # Negative emotions can suppress both desires
+                d1.intensity *= (1 - self.resolution_strength * conflict_score * 0.5)
+                d2.intensity *= (1 - self.resolution_strength * conflict_score * 0.5)
+            
+            # Ensure intensities don't fall below base values
+            d1.intensity = max(d1.intensity, d1.base_desire.importance * d1.base_desire.frequency)
+            d2.intensity = max(d2.intensity, d2.base_desire.importance * d2.base_desire.frequency)
+        
+        return desire_states
     
     def activate_desire(self, desire_state: DesireState, emotion_state: np.ndarray, trait_state: np.ndarray) -> None:
         """Activate a desire based on emotional and trait states."""
@@ -77,6 +159,12 @@ class DesireFormation:
         positive_emotion = emotion_state[0]
         negative_emotion = emotion_state[1]
         emotion_modulation = positive_emotion - negative_emotion
+        
+        # Get active desires
+        active_desires = [d for d in self.desires if d.is_active]
+        
+        # Resolve conflicts between active desires
+        active_desires = self.resolve_conflicts(active_desires, emotion_state)
         
         # Update existing desires with enhanced feedback
         for desire_state in self.desires:
