@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from dynamicUpdates import DynamicSystem, DynamicConfig, UpdateType
 import math
+from stochasticDynamics import StochasticDynamics, SDEConfig
 
 class ArbitrationType(Enum):
     WEIGHTED = "weighted"
@@ -12,46 +13,83 @@ class ArbitrationType(Enum):
 
 @dataclass
 class ArbitrationConfig:
-    """Configuration for arbitration mechanisms"""
-    type: ArbitrationType
-    temperature: float = 1.0  # For softmax
-    weights: Optional[Dict[str, float]] = None  # For weighted arbitration
-    max_iterations: int = 100  # For Nash equilibrium computation
-    convergence_threshold: float = 1e-6
+    """Configuration for arbitration engine"""
+    temperature: float = 1.0
+    update_type: UpdateType = UpdateType.DISCRETE
+    sde_config: Optional[SDEConfig] = None
 
 class ArbitrationEngine:
     """
-    Implementation of formal arbitration models from Section 4.
-    Handles weighted utility arbitration, softmax arbitration, and Nash equilibrium computation.
+    Implements continuous-time arbitration between goals using stochastic differential equations.
     """
-    def __init__(self, 
-                 arbitration_rule: str = "softmax",
-                 temperature: float = 1.0,
-                 update_type: UpdateType = UpdateType.DISCRETE):
+    def __init__(self, config: Optional[ArbitrationConfig] = None):
+        self.config = config or ArbitrationConfig()
+        self.stochastic_dynamics = StochasticDynamics(config=self.config.sde_config)
+        self.current_weights: Dict[str, float] = {}
+    
+    def arbitrate(self, utilities: Dict[str, float], trait_values: Optional[Dict[str, float]] = None) -> Dict[str, float]:
         """
-        Initialize the arbitration engine with specified rule and parameters.
+        Arbitrate between goals using SDE-based weight evolution.
         
         Args:
-            arbitration_rule: Type of arbitration rule to use ("softmax" or "nash")
-            temperature: Temperature parameter for softmax (higher = more uniform)
-            update_type: Whether to use discrete or continuous-time updates
+            utilities: Dictionary mapping goal names to their utilities
+            trait_values: Optional dictionary of trait values for temperature modulation
+            
+        Returns:
+            Dictionary mapping goal names to their arbitration weights
         """
-        self.arbitration_rule = arbitration_rule
-        self.base_temperature = temperature
-        self.update_type = update_type
-        self.current_weights = {}
-        self.dynamic_system = DynamicSystem(update_type)
-        self.config = DynamicConfig(update_type=update_type, temperature=temperature)
+        if not utilities:
+            return {}
+        
+        # Get effective temperature based on traits
+        effective_temp = self.stochastic_dynamics.get_effective_temperature(trait_values or {})
+        
+        # Calculate target weights using softmax with trait-modulated temperature
+        target_weights = self._softmax(utilities, effective_temp)
+        
+        # Update current weights using SDE
+        self.current_weights = self.stochastic_dynamics.weight_sde(
+            current_weights=self.current_weights,
+            target_weights=target_weights,
+            utilities=utilities,
+            temperature=effective_temp,
+            trait_values=trait_values
+        )
+        
+        return self.current_weights
+    
+    def _softmax(self, values: Dict[str, float], temperature: float) -> Dict[str, float]:
+        """Convert utilities to probabilities using softmax with temperature."""
+        if not values:
+            return {}
+        
+        # Scale by temperature
+        scaled = {k: v/temperature for k, v in values.items()}
+        
+        # Subtract max for numerical stability
+        max_val = max(scaled.values())
+        exps = {k: np.exp(v - max_val) for k, v in scaled.items()}
+        
+        # Normalize
+        total = sum(exps.values())
+        if total == 0:
+            return {k: 1.0/len(values) for k in values}
+        
+        return {k: v/total for k, v in exps.items()}
+    
+    def get_stability_metrics(self) -> Dict[str, float]:
+        """Get stability metrics for the arbitration process."""
+        return self.stochastic_dynamics.get_stability_metrics()
     
     def get_effective_temperature(self, utilities: Dict[str, float]) -> float:
         """Calculate effective temperature based on utility variance."""
         if not utilities:
-            return self.base_temperature
+            return self.config.temperature
             
         # Higher variance = higher temperature (more exploration)
         utility_values = list(utilities.values())
         variance = np.var(utility_values) if len(utility_values) > 1 else 0
-        return self.base_temperature * (1.0 + variance)
+        return self.config.temperature * (1.0 + variance)
     
     def softmax_arbitration(self, utilities: Dict[str, float], temperature: float = 1.0) -> Dict[str, float]:
         """
@@ -99,7 +137,7 @@ class ArbitrationEngine:
     
     def get_arbitration_rule(self) -> Callable:
         """Get the appropriate arbitration rule function."""
-        if self.arbitration_rule == "nash":
+        if self.config.update_type == UpdateType.NASH:
             return self._nash_arbitration
         return self.softmax_arbitration
     
@@ -148,16 +186,9 @@ class ArbitrationEngine:
         
         return new_weights
     
-    def get_stability_metrics(self) -> Dict[str, float]:
-        """Get stability metrics including temperature effects."""
-        metrics = self.dynamic_system.get_stability_metrics()
-        if self.current_weights:
-            metrics['temperature'] = self.get_effective_temperature(self.current_weights)
-        return metrics
-    
     def get_lipschitz_bound(self) -> float:
         """Get Lipschitz bound considering temperature effects."""
-        return self.dynamic_system.get_lipschitz_bound()
+        return self.stochastic_dynamics.get_lipschitz_bound()
     
     def detect_conflicts(self) -> List[tuple]:
         """Detect potential conflicts between goals."""

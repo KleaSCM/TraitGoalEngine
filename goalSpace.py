@@ -4,6 +4,7 @@ import numpy as np
 from enum import Enum
 from arbitration import ArbitrationEngine, ArbitrationConfig, ArbitrationType
 from dynamicUpdates import UpdateType
+from stochasticDynamics import StochasticDynamics, SDEConfig
 
 class GoalStatus(Enum):
     PENDING = "pending"
@@ -53,24 +54,27 @@ class Goal:
         self.utility = max(0.0, min(1.0, self.utility))
         return self.utility
 
+@dataclass
+class GoalSpaceConfig:
+    """Configuration for goal space dynamics"""
+    temperature: float = 1.0
+    stability_threshold: float = 0.1
+    progress_threshold: float = 0.8
+    sde_config: Optional[SDEConfig] = None
+
 class GoalSpace:
     """
     Implements the goal space with dynamic arbitration and recursive utility evaluation.
     """
-    def __init__(self, 
-                 update_type: UpdateType = UpdateType.DISCRETE,
-                 arbitration_rule: str = "softmax",
-                 temperature: float = 1.0):
-        self.goals: Dict[str, Goal] = {}
-        self.dependencies: Dict[str, Set[str]] = {}
-        self.arbitration_engine = ArbitrationEngine(
-            arbitration_rule=arbitration_rule,
-            temperature=temperature,
-            update_type=update_type
-        )
+    def __init__(self, config: Optional[GoalSpaceConfig] = None):
+        self.config = config or GoalSpaceConfig()
+        self.arbitration_engine = ArbitrationEngine(temperature=self.config.temperature)
+        self.stochastic_dynamics = StochasticDynamics(config=self.config.sde_config)
+        self.goals: Dict[str, Any] = {}
         self.utility_history: List[Dict[str, float]] = []
         self.weight_history: List[Dict[str, float]] = []
-        self.temperature = temperature  # Base temperature for softmax
+        self.current_utilities: Dict[str, float] = {}
+        self.current_weights: Dict[str, float] = {}
     
     def add_goal(self, goal: Goal, dependencies: Optional[List[str]] = None):
         """
@@ -146,134 +150,114 @@ class GoalSpace:
         return goal.priority * (0.5 + 0.5 * goal.progress)  # Add base utility of 0.5
     
     def evaluate_all_utilities(self, trait_values: Dict[str, float]) -> Dict[str, float]:
-        """
-        Evaluate utilities for all goals, taking into account trait dependencies.
-        """
-        if not self.goals:
-            return {}
+        """Evaluate utilities for all goals using SDE-based evolution."""
+        target_utilities = {}
         
-        utilities = {}
+        # Calculate target utilities based on trait values
         for goal_name, goal in self.goals.items():
-            # Get base utility from goal's utility function
+            # Base utility from goal's utility function
             base_utility = goal.utility_fn({})
             
             # Add influence from linked traits
             trait_influence = 0.0
-            for trait_name in goal.linked_traits:
-                if trait_name in trait_values:
-                    trait_value = trait_values[trait_name]
-                    weight = goal.attributes.get('linked_trait_weights', {}).get(trait_name, 0.3)
-                    trait_influence += weight * trait_value
+            for trait, weight in goal.linked_traits.items():
+                if trait in trait_values:
+                    trait_influence += weight * trait_values[trait]
             
             # Combine base utility with trait influence
-            utilities[goal_name] = base_utility * (1 + trait_influence)
+            target_utilities[goal_name] = max(0.0, min(1.0, base_utility + trait_influence))
         
-        return utilities
+        # Update current utilities using SDE
+        for goal_name, target_utility in target_utilities.items():
+            current_utility = self.current_utilities.get(goal_name, 0.5)
+            stability = goal.attributes.get('stability', 0.5)
+            
+            # Get goal-specific trait values
+            goal_traits = {
+                'resilience': goal.attributes.get('resilience', 0.5),
+                'decisiveness': goal.attributes.get('decisiveness', 0.5)
+            }
+            
+            self.current_utilities[goal_name] = self.stochastic_dynamics.utility_sde(
+                current_utility=current_utility,
+                target_utility=target_utility,
+                stability=stability,
+                temperature=self.config.temperature,
+                trait_values=goal_traits
+            )
+        
+        return self.current_utilities
     
     def arbitrate_goals(self, trait_values: Optional[Dict[str, float]] = None) -> Dict[str, float]:
-        """
-        Arbitrate between goals using trait-modulated softmax.
-        """
-        if not self.goals:
-            return {}
+        """Arbitrate between goals using SDE-based weight evolution."""
+        if trait_values is None:
+            trait_values = {}
         
-        # Get utilities for all goals
+        # Get current utilities
         utilities = self.evaluate_all_utilities(trait_values)
         
-        # Calculate effective temperature based on trait states
-        effective_temp = self.get_effective_temperature()
+        # Calculate target weights using softmax
+        target_weights = self.arbitration_engine.arbitrate(utilities)
         
-        # Apply softmax with temperature modulation
-        weights = self.arbitration_engine.softmax_arbitration(utilities, effective_temp)
+        # Get system-wide trait values
+        system_traits = {
+            'resilience': np.mean([g.attributes.get('resilience', 0.5) for g in self.goals.values()]),
+            'decisiveness': np.mean([g.attributes.get('decisiveness', 0.5) for g in self.goals.values()])
+        }
         
-        # Update current weights
-        self.arbitration_engine.update_weights(utilities)
+        # Update current weights using SDE
+        self.current_weights = self.stochastic_dynamics.weight_sde(
+            current_weights=self.current_weights,
+            target_weights=target_weights,
+            utilities=utilities,
+            temperature=self.config.temperature,
+            trait_values=system_traits
+        )
         
-        return weights
+        return self.current_weights
     
     def update_goal_progress(self, goal_name: str, progress_delta: float, trait_values: Optional[Dict[str, float]] = None) -> None:
-        """
-        Update goal progress and handle trait interactions.
-        
-        Args:
-            goal_name: Name of the goal to update
-            progress_delta: Amount to change progress by
-            trait_values: Optional dictionary of trait values. If None, will use default values.
-        """
+        """Update goal progress and trait values."""
         if goal_name not in self.goals:
-            raise ValueError(f"Goal {goal_name} not found")
+            return
         
         goal = self.goals[goal_name]
         old_progress = goal.progress
         
-        # Update goal progress
+        # Update progress
         goal.progress = min(1.0, max(0.0, goal.progress + progress_delta))
         
-        # Get trait values if not provided
-        if trait_values is None:
-            trait_values = {trait: 0.5 for trait in goal.linked_traits} if goal.linked_traits else {}
+        # Check for completion
+        if goal.progress >= self.config.progress_threshold and not goal.completed:
+            goal.completed = True
+            goal.completion_time = len(self.utility_history)
         
         # Update stability metrics
+        if trait_values is None:
+            trait_values = {trait: 0.5 for trait in goal.linked_traits} if goal.linked_traits else {}
         self.utility_history.append(self.evaluate_all_utilities(trait_values))
         self.weight_history.append(self.arbitrate_goals(trait_values))
-        
-        # Check for goal completion
-        if goal.progress >= 0.8 and goal.status == GoalStatus.ACTIVE:
-            goal.status = GoalStatus.SATISFIED
-    
-    def get_effective_temperature(self) -> float:
-        """
-        Calculate effective temperature based on trait states.
-        """
-        base_temp = self.arbitration_engine.config.temperature
-        
-        # Get trait values for resilience and decisiveness
-        resilience = 0.5  # Default value
-        decisiveness = 0.5  # Default value
-        
-        for goal in self.goals.values():
-            if 'resilience' in goal.attributes:
-                resilience = max(resilience, goal.attributes['resilience'])
-            if 'decisiveness' in goal.attributes:
-                decisiveness = max(decisiveness, goal.attributes['decisiveness'])
-        
-        # Temperature is inversely proportional to resilience and decisiveness
-        return base_temp / (resilience * decisiveness)
     
     def get_stability_metrics(self) -> Dict[str, float]:
         """Get stability metrics for the goal space."""
-        if len(self.utility_history) < 2:
-            return {
-                'max_diff': 0.0,
-                'mean_diff': 0.0,
-                'std_diff': 0.0,
-                'convergence_rate': 0.0
-            }
-            
-        # Get last two utility vectors
-        old = self.utility_history[-2]
-        new = self.utility_history[-1]
+        if not self.utility_history or not self.weight_history:
+            return {}
         
-        # Compute differences
-        diffs = [abs(old[name] - new[name]) for name in old]
-        max_diff = max(diffs)
-        mean_diff = sum(diffs) / len(diffs)
-        std_diff = np.std(diffs)
+        # Calculate utility stability
+        recent_utilities = self.utility_history[-10:]
+        utility_variance = np.var([list(u.values()) for u in recent_utilities])
         
-        # Compute convergence rate
-        if len(self.utility_history) > 2:
-            prev_diff = sum(abs(self.utility_history[-3][name] - old[name]) 
-                          for name in old)
-            curr_diff = sum(diffs)
-            convergence_rate = (prev_diff - curr_diff) / prev_diff if prev_diff > 0 else 0.0
-        else:
-            convergence_rate = 0.0
-            
+        # Calculate weight stability
+        recent_weights = self.weight_history[-10:]
+        weight_variance = np.var([list(w.values()) for w in recent_weights])
+        
+        # Get SDE stability metrics
+        sde_metrics = self.stochastic_dynamics.get_stability_metrics()
+        
         return {
-            'max_diff': max_diff,
-            'mean_diff': mean_diff,
-            'std_diff': std_diff,
-            'convergence_rate': convergence_rate
+            'utility_stability': 1.0 / (1.0 + utility_variance),
+            'weight_stability': 1.0 / (1.0 + weight_variance),
+            **sde_metrics
         }
     
     def get_lipschitz_bound(self) -> float:
