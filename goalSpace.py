@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 from enum import Enum
 from arbitration import ArbitrationEngine, ArbitrationConfig, ArbitrationType
+from dynamicUpdates import UpdateType
 
 class GoalStatus(Enum):
     PENDING = "pending"
@@ -24,6 +25,8 @@ class Goal:
     status: GoalStatus = GoalStatus.PENDING
     progress: float = 0.0
     urgency: float = 0.0  # Time-dependent urgency u(g,t) from Definition 8
+    description: str = ""
+    linked_traits: List[str] = None
     
     @property
     def effective_weight(self) -> float:
@@ -35,237 +38,137 @@ class Goal:
 
 class GoalSpace:
     """
-    Implementation of the Goal Space G ⊆ Rn and Goal Dependency Graph D = (V,E)
-    from Definitions 1 and 5, with recursive utility evaluation from Section 6.
+    Implements the goal space with dynamic arbitration and recursive utility evaluation.
     """
-    def __init__(self, max_iterations: int = 100, convergence_threshold: float = 1e-6):
+    def __init__(self, 
+                 update_type: UpdateType = UpdateType.DISCRETE,
+                 arbitration_rule: str = "softmax",
+                 temperature: float = 1.0):
         self.goals: Dict[str, Goal] = {}
-        self.dependency_graph: Dict[str, Set[str]] = {}
-        self.utility_cache: Dict[str, float] = {}
-        self.max_iterations = max_iterations
-        self.convergence_threshold = convergence_threshold
-        self.arbitration_weights: Dict[str, float] = {}  # Initialize arbitration weights
-        
-        # Initialize arbitration engine with softmax configuration
+        self.dependencies: Dict[str, Set[str]] = {}
         self.arbitration_engine = ArbitrationEngine(
-            ArbitrationConfig(
-                type=ArbitrationType.SOFTMAX,
-                temperature=1.0
-            )
+            arbitration_rule=arbitration_rule,
+            temperature=temperature,
+            update_type=update_type
         )
-        
-    def add_goal(self, goal: Goal):
-        """
-        Add a goal to the space, maintaining the DAG property of the dependency graph.
-        """
-        self.goals[goal.name] = goal
-        self.dependency_graph[goal.name] = goal.dependencies
-        
-        # Initialize arbitration weight for the new goal (uniform)
-        n = len(self.goals)
-        for g in self.goals:
-            self.arbitration_weights[g] = 1.0 / n
-        
-        # Verify DAG property (antisymmetry and transitivity from Definition 4)
-        if not self._is_dag():
-            raise ValueError("Adding this goal would create a cycle in the dependency graph")
-        
-        # Initialize with uniform weights through arbitration engine
-        if not hasattr(self, 'arbitration_engine'):
-            self.arbitration_engine = ArbitrationEngine(
-                ArbitrationConfig(
-                    type=ArbitrationType.SOFTMAX,
-                    temperature=1.0
-                )
-            )
     
-    def _is_dag(self) -> bool:
+    def add_goal(self, goal: Goal, dependencies: Optional[List[str]] = None):
         """
-        Verify the Goal Dependency Graph is a DAG (Definition 5).
-        Checks reflexivity, antisymmetry, and transitivity properties.
+        Add a goal to the space with optional dependencies.
+        Checks for cycles in the dependency graph.
         """
+        # Check for cycles
+        if dependencies:
+            self.dependencies[goal.name] = set(dependencies)
+            if self._has_cycle(goal.name):
+                raise ValueError(f"Adding {goal.name} would create a cycle in the dependency graph")
+        else:
+            self.dependencies[goal.name] = set()
+        
+        self.goals[goal.name] = goal
+    
+    def _has_cycle(self, start: str) -> bool:
+        """Check if adding a goal would create a cycle in the dependency graph."""
         visited = set()
-        temp = set()
+        path = set()
         
-        def visit(node: str) -> bool:
-            if node in temp:
-                return False  # Cycle detected (violates antisymmetry)
-            if node in visited:
+        def dfs(node: str) -> bool:
+            if node in path:
                 return True
+            if node in visited:
+                return False
             
-            temp.add(node)
-            for neighbor in self.dependency_graph.get(node, set()):
-                if not visit(neighbor):
-                    return False
-            
-            temp.remove(node)
             visited.add(node)
-            return True
+            path.add(node)
+            
+            for dep in self.dependencies.get(node, set()):
+                if dep in self.goals and dfs(dep):
+                    return True
+            
+            path.remove(node)
+            return False
         
-        return all(visit(node) for node in self.dependency_graph)
+        return dfs(start)
     
     def get_utility(self, goal_name: str) -> float:
         """
-        Recursive Utility Function from Definition 21.
-        Implements fixed-point iteration to find utility values.
+        Recursively compute utility for a goal based on its dependencies.
         """
-        if goal_name in self.utility_cache:
-            return self.utility_cache[goal_name]
+        if goal_name not in self.goals:
+            return 0.0
         
         goal = self.goals[goal_name]
         
-        # If goal has a recursive utility function, use it
-        if goal.utility_fn is not None:
-            # Get dependency utilities
-            dep_utils = {dep: self.get_utility(dep) 
-                        for dep in goal.dependencies}
-            
-            # Evaluate utility function
-            utility = goal.utility_fn(dep_utils, self.arbitration_weights)
-        else:
-            # Base case: no recursive function, use effective weight
-            dependencies = self.dependency_graph[goal_name]
-            
-            if not dependencies:
-                # No dependencies, use effective weight directly
-                utility = goal.effective_weight
-            else:
-                # Recursive case: aggregate utilities of dependencies
-                dep_utilities = [self.get_utility(dep) for dep in dependencies]
-                utility = self._aggregate_utilities(dep_utilities) * goal.effective_weight
+        # If goal has a utility function, use it
+        if goal.utility_fn:
+            # Get utilities of dependencies
+            dep_utilities = {
+                dep: self.get_utility(dep)
+                for dep in self.dependencies[goal_name]
+                if dep in self.goals
+            }
+            return goal.utility_fn(dep_utilities)
         
-        self.utility_cache[goal_name] = utility
-        return utility
+        # Default utility based on progress and priority
+        return goal.priority * (0.5 + 0.5 * goal.progress)  # Add base utility of 0.5
     
     def evaluate_all_utilities(self) -> Dict[str, float]:
         """
         Evaluate utilities for all goals using fixed-point iteration.
-        Implements the recursive utility vector function U from Definition 21.
         """
-        utilities = {name: 0.0 for name in self.goals}
+        utilities = {}
+        max_iterations = 100
+        convergence_threshold = 1e-6
         
-        for _ in range(self.max_iterations):
+        # Initialize utilities
+        for name in self.goals:
+            utilities[name] = self.get_utility(name)
+        
+        # Fixed-point iteration
+        for _ in range(max_iterations):
             old_utilities = utilities.copy()
             
-            # Update each goal's utility
+            # Update utilities
             for name in self.goals:
                 utilities[name] = self.get_utility(name)
             
             # Check convergence
-            if self._check_convergence(old_utilities, utilities):
+            max_diff = max(abs(utilities[name] - old_utilities[name])
+                          for name in utilities)
+            if max_diff < convergence_threshold:
                 break
         
         return utilities
     
-    def _check_convergence(self, old: Dict[str, float], new: Dict[str, float]) -> bool:
-        """Check if utility values have converged"""
-        return all(abs(old[name] - new[name]) < self.convergence_threshold
-                  for name in old)
+    def arbitrate_goals(self) -> Dict[str, float]:
+        """
+        Update arbitration weights based on current utilities.
+        """
+        utilities = self.evaluate_all_utilities()
+        return self.arbitration_engine.update_weights(utilities)
     
-    def arbitrate_goals(self, temperature: float = 1.0) -> Dict[str, float]:
+    def update_goal_progress(self, goal_name: str, delta: float):
         """
-        Recursive arbitration update from Definition 22.
-        Updates arbitration weights based on current utilities and previous weights.
+        Update progress for a goal and check satisfaction.
         """
-        # Update temperature if provided
-        if temperature != self.arbitration_engine.config.temperature:
-            self.arbitration_engine.config.temperature = temperature
+        if goal_name in self.goals:
+            goal = self.goals[goal_name]
+            goal.progress = max(0.0, min(1.0, goal.progress + delta))
             
-        # Evaluate all utilities recursively
-        utilities = self.evaluate_all_utilities()
-        
-        # Get new weights from arbitration engine
-        new_weights = self.arbitration_engine.arbitrate(utilities)
-        
-        # Update weights with smoothing
-        for name in self.goals:
-            self.arbitration_weights[name] = (
-                0.7 * new_weights[name] + 
-                0.3 * self.arbitration_weights[name]
-            )
-        
-        return self.arbitration_weights
-    
-    def step(self) -> Tuple[Dict[str, float], Dict[str, float]]:
-        """
-        Combined recursive decision dynamics from Definition 23.
-        Updates both utilities and arbitration weights.
-        """
-        # Evaluate utilities recursively
-        utilities = self.evaluate_all_utilities()
-        
-        # Update arbitration
-        weights = self.arbitrate_goals()
-        
-        return utilities, weights
-    
-    def _aggregate_utilities(self, utilities: List[float]) -> float:
-        """
-        Utility Aggregation Operator from Definition 6.
-        Implements monotonicity property.
-        """
-        # Using weighted geometric mean as aggregation operator
-        # This ensures monotonicity and handles zero utilities gracefully
-        if not utilities:
-            return 0.0
-        
-        # Add small epsilon to avoid log(0)
-        eps = 1e-10
-        utilities = [u + eps for u in utilities]
-        
-        # Compute geometric mean
-        return np.exp(np.mean(np.log(utilities))) - eps
-    
-    def update_urgency(self, goal_name: str, time: float):
-        """
-        Update goal urgency based on time (Definition 8).
-        Ensures boundedness of effective weight (Theorem 1).
-        """
-        goal = self.goals[goal_name]
-        
-        # Example urgency function: exponential decay from 1.0
-        goal.urgency = np.exp(-0.1 * time)
-        
-        # Clear utility cache as urgency affects utility
-        self.utility_cache.clear()
+            if goal.progress >= 1.0:
+                goal.status = GoalStatus.SATISFIED
     
     def get_stability_metrics(self) -> Dict[str, float]:
-        """
-        Get stability metrics for the arbitration process.
-        """
+        """Get stability metrics from the arbitration engine."""
         return self.arbitration_engine.get_stability_metrics()
     
     def get_lipschitz_bound(self) -> float:
-        """
-        Get Lipschitz constant bound for the arbitration operator.
-        """
+        """Get Lipschitz bound from the arbitration engine."""
         return self.arbitration_engine.get_lipschitz_bound()
     
-    def detect_conflicts(self) -> List[Tuple[str, str]]:
-        """
-        Conflict Detection from Definition 14.
-        Identifies pairs of goals with opposing utility gradients.
-        """
-        conflicts = []
-        goal_names = list(self.goals.keys())
-        
-        for i, g1 in enumerate(goal_names):
-            for g2 in goal_names[i+1:]:
-                # Compute utility gradients
-                grad1 = self._compute_utility_gradient(g1)
-                grad2 = self._compute_utility_gradient(g2)
-                
-                # Check for negative correlation
-                if np.dot(grad1, grad2) < 0:
-                    conflicts.append((g1, g2))
-        
-        return conflicts
-    
-    def _compute_utility_gradient(self, goal_name: str):
-        goal = self.goals[goal_name]
-        # FIX: Only use numeric attributes for gradient calculation to avoid errors with strings/lists
-        numeric_values = [v for v in goal.attributes.values() if isinstance(v, (int, float))]
-        return np.array(numeric_values)
+    def detect_conflicts(self) -> List[tuple]:
+        """Detect potential conflicts between goals."""
+        return self.arbitration_engine.detect_conflicts()
     
     def get_top_goals(self, n: int = 5) -> List[Goal]:
         """
@@ -285,18 +188,6 @@ class GoalSpace:
             reverse=True
         )
         return sorted_goals[:n]
-    
-    def update_goal_progress(self, goal_name: str, delta: float):
-        """
-        Update progress of a goal.
-        """
-        goal = self.goals[goal_name]
-        goal.progress = min(1.0, goal.progress + delta)
-        
-        if goal.progress >= 0.8:  # Satisfaction threshold
-            goal.status = GoalStatus.SATISFIED
-        elif goal.progress <= 0.0:
-            goal.status = GoalStatus.FAILED
     
     def get_goal_vector(self, goal_name: str) -> np.ndarray:
         """
@@ -323,4 +214,37 @@ class GoalSpace:
         vectors = []
         for goal in self.goals.values():
             vectors.extend(self.get_goal_vector(goal.name))
-        return np.array(vectors) 
+        return np.array(vectors)
+    
+    def update_urgency(self, goal_name: str, time: float):
+        """
+        Update goal urgency based on time (Definition 8).
+        Ensures boundedness of effective weight (Theorem 1).
+        """
+        goal = self.goals[goal_name]
+        
+        # Example urgency function: exponential decay from 1.0
+        goal.urgency = np.exp(-0.1 * time)
+    
+    def _aggregate_utilities(self, utilities: List[float]) -> float:
+        """
+        Utility Aggregation Operator from Definition 6.
+        Implements monotonicity property.
+        """
+        # Using weighted geometric mean as aggregation operator
+        # This ensures monotonicity and handles zero utilities gracefully
+        if not utilities:
+            return 0.0
+        
+        # Add small epsilon to avoid log(0)
+        eps = 1e-10
+        utilities = [u + eps for u in utilities]
+        
+        # Compute geometric mean
+        return np.exp(np.mean(np.log(utilities))) - eps
+    
+    def _compute_utility_gradient(self, goal_name: str):
+        goal = self.goals[goal_name]
+        # FIX: Only use numeric attributes for gradient calculation to avoid errors with strings/lists
+        numeric_values = [v for v in goal.attributes.values() if isinstance(v, (int, float))]
+        return np.array(numeric_values) 
