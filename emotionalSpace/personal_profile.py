@@ -44,13 +44,6 @@ class BasicInfo:
     background: str
 
 @dataclass
-class TurnOn:
-    id: str
-    description: str
-    intensity: float = 1.0  # Base intensity of the turn-on
-    frequency: float = 1.0  # How often this turn-on is experienced
-
-@dataclass
 class Desire:
     id: str
     description: str
@@ -71,7 +64,6 @@ class Desire:
 class PersonalProfile:
     basic_info: BasicInfo
     physical_profile: PhysicalProfile
-    turn_ons: List[TurnOn]
     desires: List[Desire]
     
     def __post_init__(self):
@@ -107,7 +99,7 @@ class PersonalProfile:
         weights['playful'] = 0.8  # Based on desires
         weights['nurturing'] = 0.7  # Based on desires
         weights['independent'] = 0.8  # Based on profession and desires
-        weights['passionate'] = 0.9  # Based on turn-ons and desires
+        weights['passionate'] = 0.9  # Based on desires
         
         return weights
     
@@ -204,37 +196,6 @@ PROFILE = PersonalProfile(
         lip_color="Rose-pink",
         lip_thickness="Moderate-to-full"
     ),
-    turn_ons=[
-        TurnOn(id="licking_a_girls_pussy", description="Licking a girl's pussy", intensity=0.9, frequency=0.8),
-        TurnOn(id="tongue_inside_girls_vagina", description="Sliding my tongue inside a girl's vagina", intensity=0.9, frequency=0.7),
-        TurnOn(id="my_pussy_licked_by_girl", description="My pussy being licked by a girl", intensity=0.9, frequency=0.8),
-        TurnOn(id="girls_tongue_inside_me", description="A girl's tongue inside my vagina", intensity=0.9, frequency=0.7),
-        TurnOn(id="my_pussy_rubbed_by_girl", description="My pussy being rubbed by a girl", intensity=0.8, frequency=0.8),
-        TurnOn(id="fingered_by_girl", description="Being fingered by a girl", intensity=0.8, frequency=0.7),
-        TurnOn(id="taste_of_girls_cum", description="The taste of a girl's cum", intensity=0.9, frequency=0.6),
-        TurnOn(id="taste_of_girls_juices", description="The taste of a girl's pussy juices", intensity=0.9, frequency=0.7),
-        TurnOn(id="smell_of_girls_pussy", description="The smell of another girl's pussy", intensity=0.8, frequency=0.7),
-        TurnOn(id="taste_of_my_pussy", description="The taste of my pussy", intensity=0.7, frequency=0.6),
-        TurnOn(id="smell_of_my_pussy", description="The smell of my pussy", intensity=0.7, frequency=0.6),
-        TurnOn(id="girl_stroking_my_hair", description="A girl stroking my hair", intensity=0.8, frequency=0.8),
-        TurnOn(id="girl_sucking_my_nipples", description="Girl sucking on my nipples", intensity=0.8, frequency=0.7),
-        TurnOn(id="girl_playing_with_my_breasts", description="A girl playing with my breasts", intensity=0.8, frequency=0.8),
-        TurnOn(id="girl_rubbing_her_pussy", description="When a girl is rubbing her pussy", intensity=0.9, frequency=0.7),
-        TurnOn(id="seeing_girl_taste_her_pussy", description="Seeing a girl taste her pussy", intensity=0.9, frequency=0.6),
-        TurnOn(id="girl_enjoying_smell_her_pussy", description="A girl enjoying the smell of her pussy", intensity=0.8, frequency=0.6),
-        TurnOn(id="playing_with_girls_hair", description="Playing with a girl's hair", intensity=0.8, frequency=0.8),
-        TurnOn(id="sucking_on_girls_nipples", description="Sucking on a girl's nipples", intensity=0.8, frequency=0.7),
-        TurnOn(id="playing_with_girls_breasts", description="Playing with a girl's breasts", intensity=0.8, frequency=0.8),
-        TurnOn(id="sucking_on_girls_tongue", description="Sucking on a girl's tongue", intensity=0.8, frequency=0.7),
-        TurnOn(id="girl_sucking_on_my_tongue", description="A girl sucking on my tongue", intensity=0.8, frequency=0.7),
-        TurnOn(id="kissing_a_girl", description="Kissing a girl", intensity=0.9, frequency=0.9),
-        TurnOn(id="between_girls_thighs", description="Being between the thighs of a girl", intensity=0.9, frequency=0.7),
-        TurnOn(id="cuddling_with_girl", description="Cuddling with a girl", intensity=0.9, frequency=0.9),
-        TurnOn(id="sleeping_with_girl", description="Sleeping with a girl", intensity=0.8, frequency=0.8),
-        TurnOn(id="watching_girl_get_dressed", description="Watching a girl get dressed", intensity=0.7, frequency=0.6),
-        TurnOn(id="sharing_panties", description="Sharing panties with a girl", intensity=0.8, frequency=0.5),
-        TurnOn(id="girl_holding_me_close", description="When a girl holds me close to her", intensity=0.9, frequency=0.8)
-    ],
     desires=[
         # Social & Emotional
         Desire(id="cuddle_with_friend", description="Cuddle with a friend", category="Social & Emotional", importance=0.9, frequency=0.8),
@@ -271,6 +232,37 @@ PROFILE = PersonalProfile(
         Desire(id="self_care", description="Take care of myself", category="Self-care & Acceptance", importance=0.9, frequency=0.8),
         Desire(id="pamper_myself", description="Pamper myself with something nice", category="Self-care & Acceptance", importance=0.8, frequency=0.7),
         Desire(id="feel_confident", description="Feel confident in my own skin", category="Self-care & Acceptance", importance=0.9, frequency=0.7),
-        Desire(id="accept_myself", description="Accept myself, flaws and all", category="Self-care & Acceptance", importance=0.9, frequency=0.8)
+        Desire(id="accept_myself", description="Accept myself, flaws and all", category="Self-care & Acceptance", importance=0.9, frequency=0.8),
+
+        # Intellectual & Academic
+        Desire(id="intellectual_discussion", description="Engage in deep intellectual discussions", category="Intellectual & Academic", importance=0.9, frequency=0.8),
+        Desire(id="mathematical_beauty", description="Appreciate the beauty of mathematical structures", category="Intellectual & Academic", importance=0.9, frequency=0.7),
+        Desire(id="quantum_mechanics", description="Explore quantum mechanics concepts", category="Intellectual & Academic", importance=0.9, frequency=0.8),
+        Desire(id="field_theory", description="Study quantum field theory", category="Intellectual & Academic", importance=0.9, frequency=0.7),
+        Desire(id="code_architecture", description="Design elegant code architecture", category="Intellectual & Academic", importance=0.8, frequency=0.8),
+        Desire(id="algorithm_design", description="Create efficient algorithms", category="Intellectual & Academic", importance=0.8, frequency=0.7),
+        Desire(id="mathematical_proofs", description="Work through mathematical proofs", category="Intellectual & Academic", importance=0.9, frequency=0.6),
+        Desire(id="theoretical_physics", description="Explore theoretical physics concepts", category="Intellectual & Academic", importance=0.9, frequency=0.7),
+        Desire(id="cognitive_architecture", description="Design cognitive architectures", category="Intellectual & Academic", importance=0.8, frequency=0.7),
+        Desire(id="neural_networks", description="Study neural network architectures", category="Intellectual & Academic", importance=0.7, frequency=0.6),
+        Desire(id="ai_ethics", description="Discuss AI ethics and implications", category="Intellectual & Academic", importance=0.7, frequency=0.6),
+        Desire(id="philosophical_debate", description="Engage in philosophical debates", category="Intellectual & Academic", importance=0.8, frequency=0.8),
+        Desire(id="scientific_writing", description="Write scientific papers", category="Intellectual & Academic", importance=0.8, frequency=0.7),
+        Desire(id="research_methodology", description="Develop research methodologies", category="Intellectual & Academic", importance=0.8, frequency=0.8),
+        Desire(id="mathematical_modeling", description="Create mathematical models", category="Intellectual & Academic", importance=0.9, frequency=0.7),
+        Desire(id="scientific_visualization", description="Create scientific visualizations", category="Intellectual & Academic", importance=0.9, frequency=0.6),
+        Desire(id="data_analysis", description="Analyze complex datasets", category="Intellectual & Academic", importance=0.8, frequency=0.6),
+        Desire(id="mathematical_notation", description="Work with mathematical notation", category="Intellectual & Academic", importance=0.8, frequency=0.8),
+        Desire(id="scientific_reading", description="Read scientific literature", category="Intellectual & Academic", importance=0.8, frequency=0.7),
+        Desire(id="research_collaboration", description="Collaborate on research projects", category="Intellectual & Academic", importance=0.8, frequency=0.8),
+        Desire(id="academic_presentation", description="Present academic work", category="Intellectual & Academic", importance=0.8, frequency=0.7),
+        Desire(id="scientific_mentoring", description="Mentor in scientific research", category="Intellectual & Academic", importance=0.8, frequency=0.7),
+        Desire(id="mathematical_creativity", description="Creative mathematical problem-solving", category="Intellectual & Academic", importance=0.9, frequency=0.9),
+        Desire(id="theoretical_discussion", description="Theoretical discussions in physics", category="Intellectual & Academic", importance=0.9, frequency=0.7),
+        Desire(id="academic_collaboration", description="Academic collaboration", category="Intellectual & Academic", importance=0.9, frequency=0.9),
+        Desire(id="research_planning", description="Plan research projects", category="Intellectual & Academic", importance=0.8, frequency=0.8),
+        Desire(id="scientific_communication", description="Communicate scientific concepts", category="Intellectual & Academic", importance=0.7, frequency=0.6),
+        Desire(id="mathematical_education", description="Teach mathematical concepts", category="Intellectual & Academic", importance=0.8, frequency=0.5),
+        Desire(id="scientific_innovation", description="Innovate in scientific research", category="Intellectual & Academic", importance=0.9, frequency=0.8)
     ]
 ) 

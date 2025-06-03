@@ -33,8 +33,8 @@ class ProfileIntegration:
             n_desires=self.n_desires  # Use actual number of desires
         )
         
-        # Initialize desire formation with profile desires and turn-ons
-        self.desire_formation = DesireFormation(profile.desires, profile.turn_ons)
+        # Initialize desire formation with profile desires
+        self.desire_formation = DesireFormation(profile.desires)
     
     def evolve_with_profile(self, dt: float) -> None:
         """Evolve the system with profile influence."""

@@ -1,7 +1,7 @@
 import numpy as np
 from typing import Tuple, List, Optional, Dict
 from dataclasses import dataclass
-from .personal_profile import Desire, TurnOn
+from .personal_profile import Desire
 
 @dataclass
 class DesireState:
@@ -15,8 +15,8 @@ class DesireState:
 class DesireFormation:
     """Models the formation and evolution of desires based on emotional and trait states."""
     
-    def __init__(self, profile_desires: List[Desire], profile_turn_ons: List[TurnOn] = None):
-        """Initialize with desires and turn-ons from the profile."""
+    def __init__(self, profile_desires: List[Desire]):
+        """Initialize with desires from the profile."""
         self.base_desires = profile_desires
         self.desires: List[DesireState] = []
         
@@ -28,27 +28,6 @@ class DesireFormation:
                 decay_rate=0.01,
                 is_active=True  # Start all desires as active
             ))
-        
-        # Convert turn-ons to desires if provided
-        if profile_turn_ons:
-            for turn_on in profile_turn_ons:
-                # Create a Desire object from the TurnOn
-                desire = Desire(
-                    id=turn_on.id,
-                    description=turn_on.description,
-                    category="Sexual & Intimate",  # New category for turn-ons
-                    importance=turn_on.intensity,
-                    frequency=turn_on.frequency,
-                    emotion_weights=np.array([0.7, 0.3]),  # Higher weight for positive emotions
-                    trait_weights=np.ones(17) / 17  # Equal weights for all traits
-                )
-                # Add as a desire state
-                self.desires.append(DesireState(
-                    base_desire=desire,
-                    intensity=desire.importance * desire.frequency,
-                    decay_rate=0.01,
-                    is_active=True
-                ))
         
         # Initialize conflict resolution parameters
         self.conflict_threshold = 0.7  # Threshold for considering desires in conflict
