@@ -40,6 +40,10 @@ class SystemIntegration:
         self.stability_threshold = 0.5
         self.performance_threshold = 0.7
         
+        # History tracking for stability analysis
+        self.state_history = []
+        self.metric_history = []
+        
     def calculate_system_metric(self, state1: SystemState, state2: SystemState) -> float:
         """
         Calculate the system metric as defined in section 30.1.
@@ -102,15 +106,30 @@ class SystemIntegration:
         Returns:
             Stability measure
         """
-        trait_stability = self.trait_evolution.state.stability
+        trait_stability = np.mean(self.trait_evolution.state.stability)
         emotion_stability = np.mean([
             self.emotional_field.positive.intensity,
             self.emotional_field.negative.intensity
         ])
-        desire_stability = self.desire_formation.state.stability
+        desire_stability = np.mean(self.desire_formation.state.stability)
+        
+        # Calculate coupling stability
+        trait_emotion_coupling = np.mean(np.abs(
+            self.trait_evolution.state.coupling_strength[:, :self.n_emotions]
+        ))
+        trait_desire_coupling = np.mean(np.abs(
+            self.trait_evolution.state.coupling_strength[:, self.n_emotions:]
+        ))
+        interaction_stability = np.mean(np.abs(
+            self.trait_evolution.state.interaction_matrix
+        ))
+        
+        # Combine stability measures with coupling effects
+        base_stability = (trait_stability + emotion_stability + desire_stability) / 3
+        coupling_stability = (trait_emotion_coupling + trait_desire_coupling + interaction_stability) / 3
         
         return np.clip(
-            (trait_stability + emotion_stability + desire_stability) / 3,
+            base_stability * (1 + self.coupling_strength * coupling_stability),
             0.0, 1.0
         )
     
@@ -122,16 +141,16 @@ class SystemIntegration:
             Performance measure
         """
         # Calculate coherence
-        trait_coherence = self.trait_evolution.state.stability
+        trait_coherence = np.mean(self.trait_evolution.state.stability)
         emotion_coherence = np.exp(-np.abs(
             self.emotional_field.positive.intensity -
             self.emotional_field.negative.intensity
         ))
-        desire_coherence = self.desire_formation.state.coherence
+        desire_coherence = np.mean(self.desire_formation.state.coherence)
         
         # Calculate efficiency
         trait_efficiency = np.exp(-np.mean(np.abs(
-            self.trait_evolution.state.plasticity
+            self.trait_evolution.state.learning_rate
         )))
         emotion_efficiency = np.exp(-np.mean(np.abs(
             self.emotional_field.weights
@@ -140,11 +159,71 @@ class SystemIntegration:
             self.desire_formation.state.flow_rates
         )))
         
+        # Calculate integration
+        trait_emotion_integration = np.mean(np.abs(
+            self.trait_evolution.state.coupling_strength[:, :self.n_emotions]
+        ))
+        trait_desire_integration = np.mean(np.abs(
+            self.trait_evolution.state.coupling_strength[:, self.n_emotions:]
+        ))
+        interaction_integration = np.mean(np.abs(
+            self.trait_evolution.state.interaction_matrix
+        ))
+        
+        # Combine all metrics
+        coherence = (trait_coherence + emotion_coherence + desire_coherence) / 3
+        efficiency = (trait_efficiency + emotion_efficiency + desire_efficiency) / 3
+        integration = (trait_emotion_integration + trait_desire_integration + interaction_integration) / 3
+        
         return np.clip(
-            (trait_coherence + emotion_coherence + desire_coherence +
-             trait_efficiency + emotion_efficiency + desire_efficiency) / 6,
+            (coherence + efficiency + self.coupling_strength * integration) / 3,
             0.0, 1.0
         )
+    
+    def calculate_phase_space_metrics(self) -> dict:
+        """
+        Calculate metrics for phase space analysis.
+        
+        Returns:
+            Dictionary of phase space metrics
+        """
+        if len(self.state_history) < 2:
+            return {}
+            
+        # Calculate phase space volume
+        recent_states = self.state_history[-10:]
+        trait_volume = np.mean([
+            np.prod(np.std([s.traits.traits for s in recent_states], axis=0))
+        ])
+        emotion_volume = np.mean([
+            np.prod(np.std([s.emotions[0].intensity for s in recent_states], axis=0))
+        ])
+        desire_volume = np.mean([
+            np.prod(np.std([s.desires.desires for s in recent_states], axis=0))
+        ])
+        
+        # Calculate attractor strength
+        trait_attractor = np.mean([
+            np.linalg.norm(s.traits.traits - recent_states[-1].traits.traits)
+            for s in recent_states[:-1]
+        ])
+        emotion_attractor = np.mean([
+            np.linalg.norm(s.emotions[0].intensity - recent_states[-1].emotions[0].intensity)
+            for s in recent_states[:-1]
+        ])
+        desire_attractor = np.mean([
+            np.linalg.norm(s.desires.desires - recent_states[-1].desires.desires)
+            for s in recent_states[:-1]
+        ])
+        
+        return {
+            'trait_volume': trait_volume,
+            'emotion_volume': emotion_volume,
+            'desire_volume': desire_volume,
+            'trait_attractor': trait_attractor,
+            'emotion_attractor': emotion_attractor,
+            'desire_attractor': desire_attractor
+        }
     
     def evolve_system(self, dt: float) -> None:
         """
@@ -174,6 +253,23 @@ class SystemIntegration:
             np.array([emotion_state[0].intensity, emotion_state[1].intensity]),
             dt
         )
+        
+        # Store state and metrics
+        current_state = SystemState(
+            traits=trait_state,
+            emotions=emotion_state,
+            desires=desire_state,
+            stability=self.calculate_stability(),
+            performance=self.calculate_performance()
+        )
+        self.state_history.append(current_state)
+        
+        # Store metrics
+        self.metric_history.append({
+            'stability': current_state.stability,
+            'performance': current_state.performance,
+            **self.calculate_phase_space_metrics()
+        })
     
     def get_system_state(self) -> SystemState:
         """
@@ -188,4 +284,21 @@ class SystemIntegration:
             desires=self.desire_formation.get_desire_state(),
             stability=self.calculate_stability(),
             performance=self.calculate_performance()
-        ) 
+        )
+    
+    def get_system_metrics(self) -> dict:
+        """
+        Get comprehensive system metrics.
+        
+        Returns:
+            Dictionary of system metrics
+        """
+        current_state = self.get_system_state()
+        phase_metrics = self.calculate_phase_space_metrics()
+        
+        return {
+            'stability': current_state.stability,
+            'performance': current_state.performance,
+            'system_norm': self.calculate_system_norm(current_state),
+            **phase_metrics
+        } 

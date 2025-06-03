@@ -35,6 +35,88 @@ class ProfileIntegration:
         
         # Initialize desire formation with profile desires
         self.desire_formation = DesireFormation(profile.desires)
+        
+        # Initialize history tracking
+        self.state_history = []
+        self.metric_history = []
+    
+    def get_system_metrics(self) -> dict:
+        """Get comprehensive system metrics."""
+        # Calculate stability
+        trait_stability = np.mean(self.trait_evolution.state.stability)
+        emotion_stability = np.mean([
+            self.emotional_field.positive.intensity,
+            self.emotional_field.negative.intensity
+        ])
+        desire_stability = np.mean(self.desire_formation.state.stability)
+        
+        # Calculate coupling stability
+        trait_emotion_coupling = np.mean(np.abs(
+            self.trait_evolution.state.coupling_strength[:, :self.n_emotions]
+        ))
+        trait_desire_coupling = np.mean(np.abs(
+            self.trait_evolution.state.coupling_strength[:, self.n_emotions:]
+        ))
+        interaction_stability = np.mean(np.abs(
+            self.trait_evolution.state.interaction_matrix
+        ))
+        
+        # Calculate performance
+        trait_coherence = np.mean(self.trait_evolution.state.stability)
+        emotion_coherence = np.exp(-np.abs(
+            self.emotional_field.positive.intensity -
+            self.emotional_field.negative.intensity
+        ))
+        desire_coherence = np.mean(self.desire_formation.state.coherence)
+        
+        # Calculate system norm
+        trait_norm = np.linalg.norm(self.trait_evolution.state.traits)
+        emotion_norm = np.sqrt(
+            self.emotional_field.positive.intensity**2 +
+            self.emotional_field.negative.intensity**2
+        )
+        desire_norm = np.linalg.norm(self.desire_formation.state.desires)
+        
+        # Calculate phase space metrics
+        if len(self.state_history) >= 2:
+            # Use more recent states for better metrics
+            recent_states = self.state_history[-min(20, len(self.state_history)):]
+            
+            # Calculate volumes using standard deviations
+            trait_volume = np.prod(np.std([s['traits'] for s in recent_states], axis=0))
+            emotion_volume = np.prod(np.std([s['emotions'] for s in recent_states], axis=0))
+            desire_volume = np.prod(np.std([s['desires'] for s in recent_states], axis=0))
+            
+            # Calculate attractor strengths using distances from current state
+            current_state = recent_states[-1]
+            trait_attractor = np.mean([
+                np.linalg.norm(s['traits'] - current_state['traits'])
+                for s in recent_states[:-1]
+            ])
+            emotion_attractor = np.mean([
+                np.linalg.norm(s['emotions'] - current_state['emotions'])
+                for s in recent_states[:-1]
+            ])
+            desire_attractor = np.mean([
+                np.linalg.norm(s['desires'] - current_state['desires'])
+                for s in recent_states[:-1]
+            ])
+        else:
+            # Initialize with small non-zero values
+            trait_volume = emotion_volume = desire_volume = 0.001
+            trait_attractor = emotion_attractor = desire_attractor = 0.001
+        
+        return {
+            'stability': (trait_stability + emotion_stability + desire_stability) / 3,
+            'performance': (trait_coherence + emotion_coherence + desire_coherence) / 3,
+            'system_norm': np.sqrt(trait_norm**2 + emotion_norm**2 + desire_norm**2),
+            'trait_volume': trait_volume,
+            'emotion_volume': emotion_volume,
+            'desire_volume': desire_volume,
+            'trait_attractor': trait_attractor,
+            'emotion_attractor': emotion_attractor,
+            'desire_attractor': desire_attractor
+        }
     
     def evolve_with_profile(self, dt: float) -> None:
         """Evolve the system with profile influence."""
@@ -59,6 +141,15 @@ class ProfileIntegration:
         
         # Evolve desires with profile influence
         self.desire_formation.evolve(emotion_state, trait_state, dt)
+        
+        # Store state and metrics
+        current_state = {
+            'traits': trait_state,
+            'emotions': emotion_state,
+            'desires': desire_state
+        }
+        self.state_history.append(current_state)
+        self.metric_history.append(self.get_system_metrics())
     
     def get_profile_influenced_state(self) -> Tuple[np.ndarray, np.ndarray, List[DesireState]]:
         """Get the current state with profile influence."""

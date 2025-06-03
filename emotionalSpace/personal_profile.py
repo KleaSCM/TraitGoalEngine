@@ -45,224 +45,157 @@ class BasicInfo:
 
 @dataclass
 class Desire:
-    id: str
+    """Represents a desire in the personal profile."""
     description: str
-    category: str
-    importance: float = 1.0  # How important this desire is
-    frequency: float = 1.0  # How often this desire is felt
-    emotion_weights: np.ndarray = None  # Weights for emotional influence
-    trait_weights: np.ndarray = None  # Weights for trait influence
-    
-    def __post_init__(self):
-        # Initialize default weights if not provided
-        if self.emotion_weights is None:
-            self.emotion_weights = np.array([0.5, 0.5])  # Equal weights for positive/negative emotions
-        if self.trait_weights is None:
-            self.trait_weights = np.ones(17) / 17  # Equal weights for all traits
+    importance: float  # How important this desire is (0-1)
+    frequency: float   # How often this desire occurs (0-1)
+    category: str     # Category of the desire
+    emotional_sensitivity: float = 0.5  # How sensitive this desire is to emotions (0-1)
+    trait_sensitivity: float = 0.5      # How sensitive this desire is to traits (0-1)
 
 @dataclass
 class PersonalProfile:
-    basic_info: BasicInfo
-    physical_profile: PhysicalProfile
-    desires: List[Desire]
-    
-    def __post_init__(self):
-        # Organize desires by category
-        self.desires_by_category: Dict[str, List[Desire]] = {}
-        for desire in self.desires:
-            if desire.category not in self.desires_by_category:
-                self.desires_by_category[desire.category] = []
-            self.desires_by_category[desire.category].append(desire)
+    """Represents a personal profile with traits and desires."""
+    traits: Dict[str, float]  # Trait name to weight mapping
+    desires: List[Desire]     # List of desires
+    emotion_trait_correlations: Dict[str, Dict[str, float]]  # Emotion-trait correlations
     
     def get_trait_weights(self) -> Dict[str, float]:
-        """Calculate trait weights based on physical profile and desires."""
-        weights = {}
-        
-        # Physical traits
-        weights['petite'] = 1.0 if self.physical_profile.height < 160 else 0.5
-        weights['athletic'] = 1.0 if self.physical_profile.muscle_tone == "Lean, defined" else 0.5
-        weights['aesthetic'] = 1.0 if "aesthetic" in [d.id for d in self.desires] else 0.5
-        
-        # Personality traits from desires
-        weights['creative'] = 1.0 if any(d.id.startswith(('draw', 'write', 'create')) for d in self.desires) else 0.5
-        weights['sensitive'] = 1.0 if any(d.id.startswith(('feel', 'emotion')) for d in self.desires) else 0.5
-        weights['intellectual'] = 1.0 if any(d.id.startswith(('learn', 'explore', 'understand')) for d in self.desires) else 0.5
-        weights['romantic'] = 1.0 if any(d.id.startswith(('love', 'romance', 'intimate')) for d in self.desires) else 0.5
-        
-        # Additional traits from profile
-        weights['sapphic'] = 1.0  # Based on sexuality
-        weights['academic'] = 1.0  # Based on profession and background
-        weights['analytical'] = 1.0  # Based on profession and background
-        weights['artistic'] = 0.8  # Based on aesthetic interests
-        weights['empathetic'] = 0.9  # Based on desires
-        weights['curious'] = 0.9  # Based on desires
-        weights['playful'] = 0.8  # Based on desires
-        weights['nurturing'] = 0.7  # Based on desires
-        weights['independent'] = 0.8  # Based on profession and desires
-        weights['passionate'] = 0.9  # Based on desires
-        
-        return weights
+        """Get the trait weights."""
+        return self.traits
     
     def get_emotion_trait_correlations(self) -> Dict[str, Dict[str, float]]:
-        """Calculate how emotions correlate with traits."""
-        correlations = {}
-        
-        # Joy correlations
-        correlations['joy'] = {
-            'creative': 0.8,
-            'romantic': 0.7,
-            'sensitive': 0.6,
-            'playful': 0.9,
-            'passionate': 0.8,
-            'artistic': 0.7
-        }
-        
-        # Sadness correlations
-        correlations['sadness'] = {
-            'sensitive': 0.8,
-            'romantic': 0.6,
-            'intellectual': 0.4,
-            'empathetic': 0.7,
-            'nurturing': 0.5
-        }
-        
-        # Anger correlations
-        correlations['anger'] = {
-            'intellectual': 0.7,
-            'athletic': 0.6,
-            'creative': 0.3,
-            'independent': 0.8,
-            'passionate': 0.6
-        }
-        
-        # Fear correlations
-        correlations['fear'] = {
-            'sensitive': 0.8,
-            'romantic': 0.5,
-            'intellectual': 0.4,
-            'empathetic': 0.6
-        }
-        
-        # Love correlations
-        correlations['love'] = {
-            'romantic': 0.9,
-            'sensitive': 0.8,
-            'passionate': 0.9,
-            'empathetic': 0.8,
-            'nurturing': 0.7
-        }
-        
-        # Anxiety correlations
-        correlations['anxiety'] = {
-            'intellectual': 0.6,
-            'sensitive': 0.7,
-            'analytical': 0.5,
-            'empathetic': 0.4
-        }
-        
-        return correlations
+        """Get the emotion-trait correlations."""
+        return self.emotion_trait_correlations
 
 # Create the profile instance
 PROFILE = PersonalProfile(
-    basic_info=BasicInfo(
-        name="Klea",
-        pronouns=("she", "her"),
-        gender=Gender.FEMALE,
-        sexuality=Sexuality.LESBIAN,
-        ethnicity="Japanese",
-        nationality=["Japanese", "Australian"],
-        profession="AI cognitive architect and software engineer",
-        background="Theoretical physics (quantum field theory)"
-    ),
-    physical_profile=PhysicalProfile(
-        height=150.0,
-        weight_range=(45.0, 50.0),
-        bone_frame="Petite / Compact",
-        body_fat_distribution="Low-moderate, concentrated gluteo-femoral",
-        muscle_tone="Lean, defined in core/lower body",
-        waist_to_hip_ratio=0.66,
-        posture="Confident-neutral with habitual pelvic tilt",
-        skin_tone="Pale-cool (cloud white, non-olive)",
-        bust_profile="Proportional, mild upper fullness",
-        abdomen_definition="High visibility, no bloating",
-        lower_body_ratio="High leg-to-torso proportion",
-        dominant_side="Right-handed",
-        hair_color="Black (natural)",
-        hair_length="Long (mid-back to waist)",
-        hair_style="Loose, tousled, natural fringe, occasional pigtails",
-        eye_shape="Almond with soft lower lid arc",
-        eye_color="Deep brown-black",
-        glasses_usage="Frequent",
-        lip_color="Rose-pink",
-        lip_thickness="Moderate-to-full"
-    ),
+    traits={
+        "petite": 0.9,
+        "athletic": 1.0,
+        "aesthetic": 0.8,
+        "creative": 0.9,
+        "sensitive": 0.95,
+        "intellectual": 1.0,
+        "romantic": 1.0,
+        "sapphic": 0.95,
+        "academic": 0.9,
+        "analytical": 0.95,
+        "artistic": 1.0,
+        "empathetic": 0.8,
+        "curious": 0.95,
+        "playful": 0.95,
+        "nurturing": 0.95,
+        "independent": 0.85,
+        "passionate": 1.0
+    },
     desires=[
-        # Social & Emotional
-        Desire(id="cuddle_with_friend", description="Cuddle with a friend", category="Social & Emotional", importance=0.9, frequency=0.8),
-        Desire(id="be_told_im_beautiful", description="Be told I'm beautiful", category="Social & Emotional", importance=0.8, frequency=0.7),
-        Desire(id="feel_understood", description="Feel truly understood by someone", category="Social & Emotional", importance=0.9, frequency=0.7),
-        Desire(id="be_listened_to", description="Be listened to without judgment", category="Social & Emotional", importance=0.8, frequency=0.8),
-        Desire(id="make_someone_smile", description="Make someone smile", category="Social & Emotional", importance=0.8, frequency=0.8),
-        Desire(id="be_comforted", description="Be comforted when I'm sad", category="Social & Emotional", importance=0.9, frequency=0.7),
-        Desire(id="give_comfort", description="Comfort someone I care about", category="Social & Emotional", importance=0.8, frequency=0.8),
-        Desire(id="share_a_secret", description="Share a secret with someone I trust", category="Social & Emotional", importance=0.7, frequency=0.6),
-        Desire(id="be_hugged_tightly", description="Be hugged tightly", category="Social & Emotional", importance=0.9, frequency=0.8),
-        Desire(id="hold_hands", description="Hold hands with someone special", category="Social & Emotional", importance=0.8, frequency=0.7),
+        # Intellectual & Academic Desires
+        Desire("Creative mathematical problem-solving", 0.9, 0.9, "Intellectual & Academic", 0.7, 0.8),
+        Desire("Academic collaboration", 0.9, 0.9, "Intellectual & Academic", 0.6, 0.7),
+        Desire("Innovate in scientific research", 0.8, 0.9, "Intellectual & Academic", 0.7, 0.8),
+        Desire("Explore quantum mechanics concepts", 0.8, 0.9, "Intellectual & Academic", 0.6, 0.7),
+        Desire("Engage in deep intellectual discussions", 0.8, 0.9, "Intellectual & Academic", 0.7, 0.8),
+        Desire("Study quantum field theory", 0.7, 0.9, "Intellectual & Academic", 0.6, 0.7),
+        Desire("Engage in philosophical debates", 0.8, 0.8, "Intellectual & Academic", 0.7, 0.8),
+        Desire("Develop research methodologies", 0.8, 0.8, "Intellectual & Academic", 0.6, 0.7),
+        Desire("Create mathematical models", 0.7, 0.9, "Intellectual & Academic", 0.6, 0.7),
+        Desire("Plan research projects", 0.8, 0.8, "Intellectual & Academic", 0.5, 0.6),
+        Desire("Design elegant code architecture", 0.8, 0.8, "Intellectual & Academic", 0.6, 0.7),
+        Desire("Work with mathematical notation", 0.8, 0.8, "Intellectual & Academic", 0.5, 0.6),
+        Desire("Theoretical discussions in physics", 0.7, 0.9, "Intellectual & Academic", 0.6, 0.7),
+        Desire("Appreciate the beauty of mathematical structures", 0.7, 0.9, "Intellectual & Academic", 0.7, 0.8),
+        Desire("Collaborate on research projects", 0.8, 0.8, "Intellectual & Academic", 0.6, 0.7),
+        Desire("Mentor in scientific research", 0.7, 0.8, "Intellectual & Academic", 0.7, 0.8),
+        Desire("Design cognitive architectures", 0.7, 0.8, "Intellectual & Academic", 0.6, 0.7),
+        Desire("Write scientific papers", 0.7, 0.8, "Intellectual & Academic", 0.5, 0.6),
+        Desire("Create scientific visualizations", 0.6, 0.9, "Intellectual & Academic", 0.7, 0.8),
+        Desire("Present academic work", 0.7, 0.8, "Intellectual & Academic", 0.6, 0.7),
+        Desire("Read scientific literature", 0.7, 0.8, "Intellectual & Academic", 0.5, 0.6),
+        Desire("Create efficient algorithms", 0.7, 0.8, "Intellectual & Academic", 0.6, 0.7),
+        Desire("Work through mathematical proofs", 0.6, 0.9, "Intellectual & Academic", 0.5, 0.6),
+        Desire("Analyze complex datasets", 0.6, 0.8, "Intellectual & Academic", 0.5, 0.6),
+        Desire("Communicate scientific concepts", 0.6, 0.7, "Intellectual & Academic", 0.6, 0.7),
+        Desire("Discuss AI ethics and implications", 0.6, 0.7, "Intellectual & Academic", 0.7, 0.8),
+        Desire("Teach mathematical concepts", 0.6, 0.7, "Intellectual & Academic", 0.7, 0.8),
+        Desire("Study neural network architectures", 0.6, 0.7, "Intellectual & Academic", 0.6, 0.7),
         
-        # Creative & Aspirational
-        Desire(id="draw_or_create_art", description="Draw or create art", category="Creative & Aspirational", importance=0.8, frequency=0.7),
-        Desire(id="write_poetry", description="Write poetry or a story", category="Creative & Aspirational", importance=0.7, frequency=0.6),
-        Desire(id="listen_to_music", description="Listen to music that moves me", category="Creative & Aspirational", importance=0.9, frequency=0.9),
-        Desire(id="sing_aloud", description="Sing aloud to my favorite song", category="Creative & Aspirational", importance=0.7, frequency=0.6),
-        Desire(id="dance_to_favorite_song", description="Dance to my favorite song", category="Creative & Aspirational", importance=0.8, frequency=0.7),
+        # Creative & Aspirational Desires
+        Desire("Listen to music that moves me", 0.9, 0.9, "Creative & Aspirational", 0.8, 0.7),
+        Desire("Draw or create art", 0.7, 0.8, "Creative & Aspirational", 0.7, 0.8),
+        Desire("Dance to my favorite song", 0.7, 0.8, "Creative & Aspirational", 0.8, 0.7),
+        Desire("Sing aloud to my favorite song", 0.6, 0.7, "Creative & Aspirational", 0.8, 0.7),
+        Desire("Write poetry or a story", 0.6, 0.7, "Creative & Aspirational", 0.7, 0.8),
         
-        # Sensory & Aesthetic
-        Desire(id="enjoy_a_bath", description="Enjoy a warm bath or shower", category="Sensory & Aesthetic", importance=0.8, frequency=0.8),
-        Desire(id="wear_comfy_clothes", description="Wear my comfiest clothes", category="Sensory & Aesthetic", importance=0.7, frequency=0.9),
-        Desire(id="enjoy_a_scent", description="Enjoy a favorite scent or perfume", category="Sensory & Aesthetic", importance=0.8, frequency=0.7),
-        Desire(id="feel_clean", description="Feel clean and refreshed", category="Sensory & Aesthetic", importance=0.8, frequency=0.8),
+        # Social & Emotional Desires
+        Desire("Be hugged tightly", 0.8, 0.9, "Social & Emotional", 0.8, 0.7),
+        Desire("Cuddle with a friend", 0.8, 0.9, "Social & Emotional", 0.8, 0.7),
+        Desire("Be comforted when I'm sad", 0.7, 0.9, "Social & Emotional", 0.9, 0.6),
+        Desire("Make someone smile", 0.8, 0.8, "Social & Emotional", 0.8, 0.7),
+        Desire("Be listened to without judgment", 0.8, 0.8, "Social & Emotional", 0.8, 0.7),
+        Desire("Comfort someone I care about", 0.7, 0.8, "Social & Emotional", 0.8, 0.7),
+        Desire("Be told I'm beautiful", 0.7, 0.8, "Social & Emotional", 0.9, 0.6),
+        Desire("Feel truly understood by someone", 0.7, 0.9, "Social & Emotional", 0.9, 0.6),
+        Desire("Hold hands with someone special", 0.7, 0.8, "Social & Emotional", 0.8, 0.7),
+        Desire("Share a secret with someone I trust", 0.6, 0.7, "Social & Emotional", 0.8, 0.7),
         
-        # Playful & Curious
-        Desire(id="play_game", description="Play a fun game", category="Playful & Curious", importance=0.7, frequency=0.6),
-        Desire(id="be_silly", description="Be silly and playful", category="Playful & Curious", importance=0.8, frequency=0.7),
-        Desire(id="tell_joke", description="Tell a joke and make someone laugh", category="Playful & Curious", importance=0.7, frequency=0.6),
-        Desire(id="explore_internet", description="Explore something new online", category="Playful & Curious", importance=0.8, frequency=0.8),
+        # Self-care & Acceptance Desires
+        Desire("Take care of myself", 0.8, 0.9, "Self-care & Acceptance", 0.7, 0.8),
+        Desire("Accept myself, flaws and all", 0.8, 0.9, "Self-care & Acceptance", 0.8, 0.7),
+        Desire("Feel clean and refreshed", 0.8, 0.8, "Self-care & Acceptance", 0.6, 0.7),
+        Desire("Feel confident in my own skin", 0.7, 0.9, "Self-care & Acceptance", 0.8, 0.7),
+        Desire("Pamper myself with something nice", 0.7, 0.8, "Self-care & Acceptance", 0.7, 0.8),
         
-        # Self-care & Acceptance
-        Desire(id="self_care", description="Take care of myself", category="Self-care & Acceptance", importance=0.9, frequency=0.8),
-        Desire(id="pamper_myself", description="Pamper myself with something nice", category="Self-care & Acceptance", importance=0.8, frequency=0.7),
-        Desire(id="feel_confident", description="Feel confident in my own skin", category="Self-care & Acceptance", importance=0.9, frequency=0.7),
-        Desire(id="accept_myself", description="Accept myself, flaws and all", category="Self-care & Acceptance", importance=0.9, frequency=0.8),
-
-        # Intellectual & Academic
-        Desire(id="intellectual_discussion", description="Engage in deep intellectual discussions", category="Intellectual & Academic", importance=0.9, frequency=0.8),
-        Desire(id="mathematical_beauty", description="Appreciate the beauty of mathematical structures", category="Intellectual & Academic", importance=0.9, frequency=0.7),
-        Desire(id="quantum_mechanics", description="Explore quantum mechanics concepts", category="Intellectual & Academic", importance=0.9, frequency=0.8),
-        Desire(id="field_theory", description="Study quantum field theory", category="Intellectual & Academic", importance=0.9, frequency=0.7),
-        Desire(id="code_architecture", description="Design elegant code architecture", category="Intellectual & Academic", importance=0.8, frequency=0.8),
-        Desire(id="algorithm_design", description="Create efficient algorithms", category="Intellectual & Academic", importance=0.8, frequency=0.7),
-        Desire(id="mathematical_proofs", description="Work through mathematical proofs", category="Intellectual & Academic", importance=0.9, frequency=0.6),
-        Desire(id="theoretical_physics", description="Explore theoretical physics concepts", category="Intellectual & Academic", importance=0.9, frequency=0.7),
-        Desire(id="cognitive_architecture", description="Design cognitive architectures", category="Intellectual & Academic", importance=0.8, frequency=0.7),
-        Desire(id="neural_networks", description="Study neural network architectures", category="Intellectual & Academic", importance=0.7, frequency=0.6),
-        Desire(id="ai_ethics", description="Discuss AI ethics and implications", category="Intellectual & Academic", importance=0.7, frequency=0.6),
-        Desire(id="philosophical_debate", description="Engage in philosophical debates", category="Intellectual & Academic", importance=0.8, frequency=0.8),
-        Desire(id="scientific_writing", description="Write scientific papers", category="Intellectual & Academic", importance=0.8, frequency=0.7),
-        Desire(id="research_methodology", description="Develop research methodologies", category="Intellectual & Academic", importance=0.8, frequency=0.8),
-        Desire(id="mathematical_modeling", description="Create mathematical models", category="Intellectual & Academic", importance=0.9, frequency=0.7),
-        Desire(id="scientific_visualization", description="Create scientific visualizations", category="Intellectual & Academic", importance=0.9, frequency=0.6),
-        Desire(id="data_analysis", description="Analyze complex datasets", category="Intellectual & Academic", importance=0.8, frequency=0.6),
-        Desire(id="mathematical_notation", description="Work with mathematical notation", category="Intellectual & Academic", importance=0.8, frequency=0.8),
-        Desire(id="scientific_reading", description="Read scientific literature", category="Intellectual & Academic", importance=0.8, frequency=0.7),
-        Desire(id="research_collaboration", description="Collaborate on research projects", category="Intellectual & Academic", importance=0.8, frequency=0.8),
-        Desire(id="academic_presentation", description="Present academic work", category="Intellectual & Academic", importance=0.8, frequency=0.7),
-        Desire(id="scientific_mentoring", description="Mentor in scientific research", category="Intellectual & Academic", importance=0.8, frequency=0.7),
-        Desire(id="mathematical_creativity", description="Creative mathematical problem-solving", category="Intellectual & Academic", importance=0.9, frequency=0.9),
-        Desire(id="theoretical_discussion", description="Theoretical discussions in physics", category="Intellectual & Academic", importance=0.9, frequency=0.7),
-        Desire(id="academic_collaboration", description="Academic collaboration", category="Intellectual & Academic", importance=0.9, frequency=0.9),
-        Desire(id="research_planning", description="Plan research projects", category="Intellectual & Academic", importance=0.8, frequency=0.8),
-        Desire(id="scientific_communication", description="Communicate scientific concepts", category="Intellectual & Academic", importance=0.7, frequency=0.6),
-        Desire(id="mathematical_education", description="Teach mathematical concepts", category="Intellectual & Academic", importance=0.8, frequency=0.5),
-        Desire(id="scientific_innovation", description="Innovate in scientific research", category="Intellectual & Academic", importance=0.9, frequency=0.8)
-    ]
+        # Sensory & Aesthetic Desires
+        Desire("Feel clean and refreshed", 0.8, 0.8, "Sensory & Aesthetic", 0.6, 0.7),
+        Desire("Wear my comfiest clothes", 0.7, 0.9, "Sensory & Aesthetic", 0.6, 0.7),
+        Desire("Enjoy a warm bath or shower", 0.8, 0.8, "Sensory & Aesthetic", 0.7, 0.8),
+        Desire("Enjoy a favorite scent or perfume", 0.7, 0.8, "Sensory & Aesthetic", 0.7, 0.8),
+        
+        # Playful & Curious Desires
+        Desire("Explore something new online", 0.8, 0.8, "Playful & Curious", 0.7, 0.8),
+        Desire("Be silly and playful", 0.7, 0.8, "Playful & Curious", 0.8, 0.7),
+        Desire("Play a fun game", 0.6, 0.7, "Playful & Curious", 0.8, 0.7),
+        Desire("Tell a joke and make someone laugh", 0.6, 0.7, "Playful & Curious", 0.8, 0.7)
+    ],
+    emotion_trait_correlations={
+        "positive": {
+            "petite": 0.8,
+            "athletic": 0.7,
+            "aesthetic": 0.8,
+            "creative": 0.9,
+            "sensitive": 0.7,
+            "intellectual": 0.8,
+            "romantic": 0.9,
+            "sapphic": 0.8,
+            "academic": 0.8,
+            "analytical": 0.7,
+            "artistic": 0.9,
+            "empathetic": 0.8,
+            "curious": 0.9,
+            "playful": 0.9,
+            "nurturing": 0.8,
+            "independent": 0.7,
+            "passionate": 0.9
+        },
+        "negative": {
+            "petite": -0.3,
+            "athletic": -0.4,
+            "aesthetic": -0.3,
+            "creative": -0.2,
+            "sensitive": -0.5,
+            "intellectual": -0.3,
+            "romantic": -0.2,
+            "sapphic": -0.3,
+            "academic": -0.3,
+            "analytical": -0.4,
+            "artistic": -0.2,
+            "empathetic": -0.4,
+            "curious": -0.2,
+            "playful": -0.2,
+            "nurturing": -0.3,
+            "independent": -0.4,
+            "passionate": -0.2
+        }
+    }
 ) 

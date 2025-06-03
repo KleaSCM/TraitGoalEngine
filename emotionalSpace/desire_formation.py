@@ -12,6 +12,14 @@ class DesireState:
     decay_rate: float = 0.01
     is_active: bool = True
 
+@dataclass
+class DesireSystemState:
+    """Represents the state of the entire desire formation system."""
+    desires: np.ndarray  # Current intensities of all desires
+    stability: np.ndarray  # Stability measures for each desire
+    coherence: np.ndarray  # Coherence measures for each desire
+    flow_rates: np.ndarray  # Flow rates for each desire
+
 class DesireFormation:
     """Models the formation and evolution of desires based on emotional and trait states."""
     
@@ -33,6 +41,14 @@ class DesireFormation:
         self.conflict_threshold = 0.7  # Threshold for considering desires in conflict
         self.resolution_strength = 0.3  # How strongly to resolve conflicts
         self.emotional_modulation = 0.5  # How much emotions influence conflict resolution
+        
+        # Initialize state tracking
+        self.state = DesireSystemState(
+            desires=np.zeros(len(profile_desires)),
+            stability=np.ones(len(profile_desires)) * 0.5,  # Start with moderate stability
+            coherence=np.ones(len(profile_desires)) * 0.5,  # Start with moderate coherence
+            flow_rates=np.ones(len(profile_desires)) * 0.1  # Start with low flow rates
+        )
     
     def calculate_desire_conflicts(self, desire_states: List[DesireState]) -> Dict[Tuple[int, int], float]:
         """
@@ -132,74 +148,68 @@ class DesireFormation:
         desire_state.is_active = True
         desire_state.age = 0.0
     
-    def evolve(self, emotion_state: np.ndarray, trait_state: np.ndarray, dt: float) -> np.ndarray:
-        """Evolve the desire states based on emotional and trait influences."""
-        # Calculate emotional influences with enhanced feedback
-        positive_emotion = emotion_state[0]
-        negative_emotion = emotion_state[1]
-        emotion_modulation = positive_emotion - negative_emotion
-        
-        # Get active desires
-        active_desires = [d for d in self.desires if d.is_active]
-        
-        # Resolve conflicts between active desires
-        active_desires = self.resolve_conflicts(active_desires, emotion_state)
-        
-        # Update existing desires with enhanced feedback
-        for desire_state in self.desires:
-            if desire_state.is_active:
-                # Calculate desire-specific influences
-                # Use default weights if not available
-                if not hasattr(desire_state.base_desire, 'emotion_weights'):
-                    desire_state.base_desire.emotion_weights = np.array([0.5, 0.5])
-                if not hasattr(desire_state.base_desire, 'trait_weights'):
-                    desire_state.base_desire.trait_weights = np.ones(len(trait_state)) / len(trait_state)
-                
-                # Calculate influences with stronger feedback
-                desire_emotion_influence = np.dot(emotion_state, desire_state.base_desire.emotion_weights)
-                desire_trait_influence = np.dot(trait_state, desire_state.base_desire.trait_weights)
-                
-                # Calculate base intensity
-                base_intensity = desire_state.base_desire.importance * desire_state.base_desire.frequency
-                
-                # Calculate intensity modulation based on emotions with stronger effect
-                # Positive emotions increase, negative emotions decrease
-                intensity_modulation = 1.0 + emotion_modulation  # Increased from 0.5 to 1.0
-                
-                # Add random fluctuation to prevent stagnation
-                random_fluctuation = np.random.normal(0, 0.05)
-                
-                # Calculate new intensity with stronger feedback and random fluctuation
-                new_intensity = base_intensity * intensity_modulation * (1 + desire_trait_influence) + random_fluctuation
-                
-                # Ensure we never go below base intensity
-                desire_state.intensity = max(new_intensity, base_intensity)
-                
-                desire_state.age += dt
-                
-                # Deactivate if age is too high, but maintain base intensity
-                if desire_state.age > 1000:
-                    desire_state.is_active = False
-                    desire_state.intensity = base_intensity
-            else:
-                # Try to activate inactive desires with enhanced probability
-                # Higher chance when positive emotions are stronger
-                activation_prob = 0.1 * desire_state.base_desire.frequency * (1 + emotion_modulation)  # Increased from 0.05 to 0.1
-                
-                # Add trait influence to activation probability
-                trait_activation = np.mean(np.abs(trait_state)) * 0.1
-                activation_prob += trait_activation
-                
-                if np.random.random() < activation_prob:
-                    self.activate_desire(desire_state, emotion_state, trait_state)
-        
-        # Return current desire intensities
-        return np.array([d.intensity for d in self.desires])
+    def evolve(self, emotion_state: np.ndarray, trait_state: np.ndarray, dt: float) -> None:
+        """Evolve the desire formation system."""
+        # Update desire states
+        for i, desire_state in enumerate(self.desires):
+            # Calculate emotional influence
+            emotional_influence = np.mean(emotion_state) * desire_state.base_desire.emotional_sensitivity
+            
+            # Calculate trait influence
+            trait_influence = np.mean(trait_state) * desire_state.base_desire.trait_sensitivity
+            
+            # Update desire intensity
+            base_intensity = desire_state.base_desire.importance * desire_state.base_desire.frequency
+            desire_state.intensity = np.clip(
+                desire_state.intensity + dt * (
+                    emotional_influence +
+                    trait_influence +
+                    base_intensity * (1 - desire_state.intensity)
+                ),
+                0.0, 2.0
+            )
+            
+            # Update desire age
+            desire_state.age += dt
+            
+            # Update desire state
+            self.state.desires[i] = desire_state.intensity
+            
+            # Update stability
+            self.state.stability[i] = np.clip(
+                self.state.stability[i] + dt * (
+                    (1 - abs(desire_state.intensity - base_intensity)) * 0.1 -
+                    self.state.stability[i] * 0.05
+                ),
+                0.1, 1.0
+            )
+            
+            # Update coherence
+            self.state.coherence[i] = np.clip(
+                self.state.coherence[i] + dt * (
+                    (1 - abs(desire_state.intensity - base_intensity)) * 0.1 -
+                    self.state.coherence[i] * 0.05
+                ),
+                0.1, 1.0
+            )
+            
+            # Update flow rates
+            self.state.flow_rates[i] = np.clip(
+                self.state.flow_rates[i] + dt * (
+                    (1 - abs(desire_state.intensity - base_intensity)) * 0.1 -
+                    self.state.flow_rates[i] * 0.05
+                ),
+                0.01, 0.5
+            )
     
     def get_active_desires(self) -> List[DesireState]:
-        """Get list of currently active desires."""
+        """Get the list of active desires."""
         return [d for d in self.desires if d.is_active]
     
     def get_desire_categories(self) -> List[str]:
         """Get list of all desire categories from the profile."""
-        return list(set(d.base_desire.category for d in self.desires)) 
+        return list(set(d.base_desire.category for d in self.desires))
+    
+    def get_desire_state(self) -> DesireSystemState:
+        """Get the current state of the desire system."""
+        return self.state 
