@@ -37,6 +37,7 @@ class ArbitrationEngine:
         self.current_weights: Dict[str, float] = {}
         self.nash_config = NashConfig()
         self.conflict_groups: List[Set[str]] = []
+        self.weight_history: List[Dict[str, float]] = []
     
     def arbitrate(self, utilities: Dict[str, float], trait_values: Optional[Dict[str, float]] = None) -> Dict[str, float]:
         """
@@ -78,6 +79,8 @@ class ArbitrationEngine:
             temperature=self.stochastic_dynamics.get_effective_temperature(trait_values or {}),
             trait_values=trait_values
         )
+        
+        self.weight_history.append(self.current_weights)
         
         return self.current_weights
     
@@ -207,6 +210,8 @@ class ArbitrationEngine:
         # Update current weights
         self.current_weights = new_weights
         
+        self.weight_history.append(self.current_weights)
+        
         return new_weights
     
     def get_lipschitz_bound(self) -> float:
@@ -233,7 +238,13 @@ class ArbitrationEngine:
                 g1_utils = [w[g1] for w in self.weight_history if g1 in w]
                 g2_utils = [w[g2] for w in self.weight_history if g2 in w]
                 
+                # Only calculate correlation if we have enough data points
                 if len(g1_utils) > 1 and len(g2_utils) > 1:
+                    # Ensure both histories have the same length
+                    min_len = min(len(g1_utils), len(g2_utils))
+                    g1_utils = g1_utils[-min_len:]  # Take most recent values
+                    g2_utils = g2_utils[-min_len:]
+                    
                     # Calculate correlation
                     correlation = np.corrcoef(g1_utils, g2_utils)[0, 1]
                     correlation_matrix[i, j] = correlation

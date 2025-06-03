@@ -2,8 +2,8 @@ from typing import Dict, List, Set, Optional, Tuple, Callable, Any
 from dataclasses import dataclass
 import numpy as np
 from enum import Enum
-from arbitration import ArbitrationEngine, ArbitrationConfig, ArbitrationType
-from dynamicUpdates import UpdateType
+from arbitration import ArbitrationEngine, ArbitrationConfig, ArbitrationType, NashConfig
+from dynamicUpdates import UpdateType, DynamicSystem, DynamicConfig
 from stochasticDynamics import StochasticDynamics, SDEConfig
 
 class GoalStatus(Enum):
@@ -31,8 +31,15 @@ class Goal:
     noise_scale: float = 0.05  # Noise scale for utility process
     urgency: float = 0.0  # Time-dependent urgency u(g,t) from Definition 8
     description: str = ""
-    linked_traits: List[str] = None
+    linked_traits: Dict[str, float] = None
+    completed: bool = False  # Track goal completion status
+    completion_time: Optional[int] = None  # Track when goal was completed
     
+    def __post_init__(self):
+        """Initialize default values for optional fields."""
+        if self.linked_traits is None:
+            self.linked_traits = {}
+
     @property
     def effective_weight(self) -> float:
         """
@@ -68,9 +75,15 @@ class GoalSpace:
     """
     def __init__(self, config: Optional[GoalSpaceConfig] = None):
         self.config = config or GoalSpaceConfig()
-        self.arbitration_engine = ArbitrationEngine(temperature=self.config.temperature)
+        self.arbitration_engine = ArbitrationEngine(
+            config=ArbitrationConfig(
+                temperature=self.config.temperature,
+                sde_config=self.config.sde_config
+            )
+        )
         self.stochastic_dynamics = StochasticDynamics(config=self.config.sde_config)
         self.goals: Dict[str, Any] = {}
+        self.dependencies: Dict[str, Set[str]] = {}  # Initialize dependencies dictionary
         self.utility_history: List[Dict[str, float]] = []
         self.weight_history: List[Dict[str, float]] = []
         self.current_utilities: Dict[str, float] = {}
@@ -92,17 +105,22 @@ class GoalSpace:
         self.goals[goal.name] = goal
         
         # Initialize weights for the new goal
-        if not self.arbitration_engine.current_weights:
-            self.arbitration_engine.current_weights = {}
-        self.arbitration_engine.current_weights[goal.name] = 1.0 / (len(self.goals) + 1)  # Equal initial weight
+        if not self.current_weights:
+            self.current_weights = {}
+        self.current_weights[goal.name] = 1.0 / (len(self.goals) + 1)  # Equal initial weight
         
         # Normalize all weights
-        total = sum(self.arbitration_engine.current_weights.values())
+        total = sum(self.current_weights.values())
         if total > 0:
-            self.arbitration_engine.current_weights = {
+            self.current_weights = {
                 name: weight / total 
-                for name, weight in self.arbitration_engine.current_weights.items()
+                for name, weight in self.current_weights.items()
             }
+            
+        # Also initialize arbitration engine weights
+        if not self.arbitration_engine.current_weights:
+            self.arbitration_engine.current_weights = {}
+        self.arbitration_engine.current_weights[goal.name] = self.current_weights[goal.name]
     
     def _has_cycle(self, start: str) -> bool:
         """Check if adding a goal would create a cycle in the dependency graph."""
@@ -245,11 +263,32 @@ class GoalSpace:
         
         # Calculate utility stability
         recent_utilities = self.utility_history[-10:]
-        utility_variance = np.var([list(u.values()) for u in recent_utilities])
+        if recent_utilities:
+            # Ensure all utility dictionaries have the same keys
+            all_keys = set().union(*[u.keys() for u in recent_utilities])
+            utility_arrays = []
+            for u in recent_utilities:
+                # Fill missing values with 0.5 (neutral utility)
+                values = [u.get(k, 0.5) for k in all_keys]
+                utility_arrays.append(values)
+            utility_variance = np.var(utility_arrays) if utility_arrays else 0.0
+        else:
+            utility_variance = 0.0
         
         # Calculate weight stability
         recent_weights = self.weight_history[-10:]
-        weight_variance = np.var([list(w.values()) for w in recent_weights])
+        if recent_weights:
+            # Ensure all weight dictionaries have the same keys
+            all_keys = set().union(*[w.keys() for w in recent_weights])
+            weight_arrays = []
+            for w in recent_weights:
+                # Fill missing values with 1/n (equal weights)
+                n = len(all_keys)
+                values = [w.get(k, 1.0/n) for k in all_keys]
+                weight_arrays.append(values)
+            weight_variance = np.var(weight_arrays) if weight_arrays else 0.0
+        else:
+            weight_variance = 0.0
         
         # Get SDE stability metrics
         sde_metrics = self.stochastic_dynamics.get_stability_metrics()
