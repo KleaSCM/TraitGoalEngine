@@ -193,7 +193,7 @@ def main():
                         goal_space.update_goal_progress(goal.name, progress_delta)
                         
                         # Check for completion
-                        if goal.progress >= 1.0:
+                        if goal.progress >= 0.8:  # Changed from 1.0 to 0.8 to match satisfaction threshold
                             goal.status = GoalStatus.SATISFIED
                             completed_goals.add(goal.name)
                             print(f"\nGoal completed: {goal.name}")
