@@ -9,6 +9,7 @@ from arbitration import ArbitrationEngine, ArbitrationConfig, ArbitrationType
 import numpy as np
 from dynamicUpdates import UpdateType
 import random
+from traitGoalEngine import calculate_goal_priorities, prepare_traits_for_goals_engine, update_trait_values
 
 def print_trait_info(engine: GoalEngine):
     """Print initial trait information"""
@@ -17,7 +18,7 @@ def print_trait_info(engine: GoalEngine):
     for name, data in engine.traits.items():
         print(f"{name}: {data['value']:.3f}")
 
-def print_system_status(goal_space):
+def print_system_status(goal_space, trait_values: Dict[str, float]):
     """Print detailed system status including dynamic metrics."""
     print("\n=== System Status ===")
     
@@ -32,8 +33,8 @@ def print_system_status(goal_space):
         print(f"    Dependencies: {goal.dependencies}")
     
     # Print utilities and weights
-    utilities = goal_space.evaluate_all_utilities()
-    weights = goal_space.arbitrate_goals()
+    utilities = goal_space.evaluate_all_utilities(trait_values)
+    weights = goal_space.arbitrate_goals(trait_values)
     
     print("\nUtilities and Weights:")
     for goal_name in goal_space.goals:
@@ -65,6 +66,11 @@ def generate_goal_from_traits(trait_name: str, trait_data: Dict[str, Any]) -> Go
     """
     Generate a goal based on a trait's current state and properties.
     """
+    # Get trait parameters for temperature modulation
+    resilience = trait_data.get('resilience', 0.5)
+    decisiveness = trait_data.get('decisiveness', 0.5)
+    effective_temp = 1.0 / (resilience * decisiveness)  # Temperature modulation
+    
     # Create utility function that depends on linked traits
     def trait_utility(dep_utilities):
         # Base utility from trait value
@@ -76,15 +82,26 @@ def generate_goal_from_traits(trait_name: str, trait_data: Dict[str, Any]) -> Go
             linked_utility = dep_utilities.get(f"{linked_trait}_goal", 0.0)
             linked_influence += 0.3 * linked_utility  # Coupling coefficient
         
-        # Add some randomness to break symmetry
-        random_factor = 0.1 * (random.random() - 0.5)
-        return base_utility + linked_influence + random_factor
+        # Mean-reverting utility process
+        mean_utility = base_utility + linked_influence
+        reversion_rate = 0.1  # λ parameter
+        current_utility = getattr(trait_utility, 'last_utility', mean_utility)
+        new_utility = mean_utility + reversion_rate * (current_utility - mean_utility)
+        
+        # Add noise proportional to temperature
+        noise = np.random.normal(0, 0.1 * effective_temp)
+        trait_utility.last_utility = new_utility + noise
+        
+        return trait_utility.last_utility
     
     # Generate goal attributes based on trait properties
     attributes = {
         'value': trait_data.get('value', 0.5),
         'stability': trait_data.get('stability', 0.5),
-        'valence': trait_data.get('valence', 0.0)
+        'valence': trait_data.get('valence', 0.0),
+        'resilience': resilience,
+        'decisiveness': decisiveness,
+        'temperature': effective_temp
     }
     
     # Create goal with trait-based properties
@@ -115,94 +132,93 @@ def should_generate_goal(trait_name: str, trait_data: Dict[str, Any], goal_space
     return trait_value < 0.8 or has_links
 
 def main():
-    # Initialize goal space with dynamic updates
+    print("Starting perpetual goal evaluation...")
+    print("Press Ctrl+C to stop\n")
+    
+    # Initialize goal space with continuous-time dynamics
     goal_space = GoalSpace(
-        update_type=UpdateType.CONTINUOUS,  # Use continuous-time dynamics
+        update_type=UpdateType.CONTINUOUS,
         arbitration_rule="softmax",
         temperature=1.0
     )
     
-    # Track completed goals
-    completed_goals = set()
-    
-    # Run perpetual goal evaluation
-    print("Starting perpetual goal evaluation...")
-    print("Press Ctrl+C to stop")
+    # Initialize trait engine
+    trait_engine = GoalEngine()
+    trait_engine.traits = prepare_traits_for_goals_engine()
     
     tick = 0
+    completed_goals = set()
+    
     try:
         while True:
-            print(f"\nTick {tick}")
+            print(f"\nTick {tick}\n")
             
-            # Generate new goals from traits
-            for trait_name, trait_data in traits.items():
+            # Update traits and generate goals
+            priorities, updated_traits = calculate_goal_priorities()
+            trait_engine.traits = updated_traits
+            
+            # Generate goals from traits
+            for trait_name, trait_data in trait_engine.traits.items():
                 if should_generate_goal(trait_name, trait_data, goal_space):
+                    goal = generate_goal_from_traits(trait_name, trait_data)
                     try:
-                        goal = generate_goal_from_traits(trait_name, trait_data)
                         goal_space.add_goal(goal)
                         print(f"\nGenerated new goal: {goal.name}")
                         print(f"  Description: {goal.description}")
                         print(f"  Dependencies: {goal.dependencies}")
+                        print(f"  Temperature: {goal_space.get_effective_temperature():.3f}")
                     except ValueError as e:
-                        # Skip if adding would create a cycle
-                        print(f"Skipping {trait_name}_goal: {str(e)}")
+                        print(f"Could not add goal {goal.name}: {e}")
             
-            # Update goal progress
-            for goal in list(goal_space.goals.values()):  # Use list to avoid modification during iteration
-                if goal.status == GoalStatus.ACTIVE:
-                    # Simulate progress based on current weights and utility
-                    weights = goal_space.arbitrate_goals()
-                    utilities = goal_space.evaluate_all_utilities()
-                    
-                    # Progress depends on both weight and utility, with some randomness
-                    base_progress = weights[goal.name] * utilities[goal.name]
-                    random_factor = 0.1 * (random.random() - 0.5)  # Add some randomness
-                    progress_delta = (base_progress + random_factor) * 0.5  # Increased from 0.2 to 0.5
-                    
-                    goal_space.update_goal_progress(goal.name, progress_delta)
-                    
-                    # Check for goal completion
-                    if goal.progress >= 1.0:  # Changed from checking status to checking progress
-                        goal.status = GoalStatus.SATISFIED
-                        completed_goals.add(goal.name)
-                        print(f"\nGoal completed: {goal.name}")
-                        print(f"  Description: {goal.description}")
-                        print(f"  Final progress: {goal.progress:.2f}")
+            # Calculate weights and utilities after all goals are added
+            if goal_space.goals:  # Only proceed if there are goals
+                # Get trait values from trait engine
+                trait_values = {name: data['value'] for name, data in trait_engine.traits.items()}
+                
+                # Calculate weights and utilities
+                weights = goal_space.arbitrate_goals(trait_values)
+                utilities = goal_space.evaluate_all_utilities(trait_values)
+                
+                # Print detailed system status
+                print_system_status(goal_space, trait_values)
+                
+                # Update progress for each active goal
+                for goal in goal_space.goals.values():
+                    if goal.status == GoalStatus.ACTIVE:
+                        # Calculate progress based on weights and utilities
+                        base_progress = weights[goal.name] * utilities[goal.name]
+                        random_factor = 0.1 * (random.random() - 0.5)  # Add some randomness
+                        progress_delta = (base_progress + random_factor) * 0.2
                         
-                        # Remove completed goal from goal space and update arbitration
-                        goal_space.goals.pop(goal.name)
-                        if goal.name in goal_space.dependencies:
-                            goal_space.dependencies.pop(goal.name)
+                        goal_space.update_goal_progress(goal.name, progress_delta)
                         
-                        # Update weights for remaining goals
-                        goal_space.arbitration_engine.update_weights(utilities)
+                        # Check for completion
+                        if goal.progress >= 1.0:
+                            goal.status = GoalStatus.SATISFIED
+                            completed_goals.add(goal.name)
+                            print(f"\nGoal completed: {goal.name}")
+                            print(f"  Final progress: {goal.progress:.2f}")
+                            print(f"  Final utility: {utilities[goal.name]:.3f}")
+                
+                # Print completion statistics
+                active_goals = sum(1 for g in goal_space.goals.values() if g.status == GoalStatus.ACTIVE)
+                completion_rate = len(completed_goals) / (len(completed_goals) + active_goals) if (len(completed_goals) + active_goals) > 0 else 0.0
+                
+                print(f"\nCompletion Statistics:")
+                print(f"  Total completed: {len(completed_goals)}")
+                print(f"  Active goals: {active_goals}")
+                print(f"  Completion rate: {completion_rate:.2%}")
             
-            # Print system status
-            print_system_status(goal_space)
-            
-            # Print completion statistics
-            print(f"\nCompletion Statistics:")
-            print(f"  Total goals completed: {len(completed_goals)}")
-            print(f"  Active goals: {len(goal_space.goals)}")
-            if len(completed_goals) + len(goal_space.goals) > 0:
-                print(f"  Completion rate: {len(completed_goals) / (len(completed_goals) + len(goal_space.goals)):.2%}")
-            
-            # Increment tick counter
             tick += 1
-            
-            # Small delay to make output readable
-            time.sleep(1)
+            time.sleep(1)  # Add a small delay between ticks
             
     except KeyboardInterrupt:
-        print("\nStopping goal evaluation...")
-        print(f"\nFinal Statistics:")
-        print(f"  Total ticks: {tick}")
-        print(f"  Total goals completed: {len(completed_goals)}")
-        if len(completed_goals) + len(goal_space.goals) > 0:
-            print(f"  Completion rate: {len(completed_goals) / (len(completed_goals) + len(goal_space.goals)):.2%}")
+        print("\n\nFinal Statistics:")
+        print(f"Total ticks: {tick}")
+        print(f"Total goals completed: {len(completed_goals)}")
         print("\nCompleted goals:")
         for goal_name in completed_goals:
-            print(f"  - {goal_name}")
+            print(f"- {goal_name}")
 
 if __name__ == "__main__":
     main()

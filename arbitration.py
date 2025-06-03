@@ -2,7 +2,8 @@ from typing import Dict, List, Tuple, Optional, Callable
 import numpy as np
 from dataclasses import dataclass
 from enum import Enum
-from dynamicUpdates import DynamicUpdateSystem, DynamicConfig, UpdateType
+from dynamicUpdates import DynamicSystem, DynamicConfig, UpdateType
+import math
 
 class ArbitrationType(Enum):
     WEIGHTED = "weighted"
@@ -36,37 +37,40 @@ class ArbitrationEngine:
             update_type: Whether to use discrete or continuous-time updates
         """
         self.arbitration_rule = arbitration_rule
-        self.temperature = temperature
-        self.weight_history: List[Dict[str, float]] = []
-        self.utility_history: List[Dict[str, float]] = []
-        
-        # Initialize dynamic update system
-        config = DynamicConfig(
-            update_type=update_type,
-            time_step=0.1,
-            max_iterations=100,
-            convergence_threshold=1e-6
-        )
-        self.dynamic_system = DynamicUpdateSystem(config)
+        self.base_temperature = temperature
+        self.update_type = update_type
+        self.current_weights = {}
+        self.dynamic_system = DynamicSystem(update_type)
+        self.config = DynamicConfig(update_type=update_type)
     
-    def _softmax(self, utilities: Dict[str, float]) -> Dict[str, float]:
-        """Convert utilities to weights using softmax normalization."""
+    def get_effective_temperature(self, utilities: Dict[str, float]) -> float:
+        """Calculate effective temperature based on utility variance."""
+        if not utilities:
+            return self.base_temperature
+            
+        # Higher variance = higher temperature (more exploration)
+        utility_values = list(utilities.values())
+        variance = np.var(utility_values) if len(utility_values) > 1 else 0
+        return self.base_temperature * (1.0 + variance)
+    
+    def softmax_arbitration(self, utilities: Dict[str, float]) -> Dict[str, float]:
+        """Softmax arbitration with temperature modulation."""
         if not utilities:
             return {}
+            
+        # Get effective temperature
+        temp = self.get_effective_temperature(utilities)
         
-        # Scale by temperature
-        scaled = {k: v/self.temperature for k, v in utilities.items()}
-        
-        # Compute softmax
-        max_util = max(scaled.values())
-        exps = {k: np.exp(v - max_util) for k, v in scaled.items()}
+        # Apply softmax with temperature
+        max_utility = max(utilities.values())
+        exps = {k: math.exp((v - max_utility) / temp) for k, v in utilities.items()}
         total = sum(exps.values())
         
         if total == 0:
             # Fallback to uniform distribution
             n = len(utilities)
             return {k: 1/n for k in utilities}
-        
+            
         return {k: v/total for k, v in exps.items()}
     
     def _nash_arbitration(self, utilities: Dict[str, float]) -> Dict[str, float]:
@@ -94,29 +98,29 @@ class ArbitrationEngine:
         """Get the appropriate arbitration rule function."""
         if self.arbitration_rule == "nash":
             return self._nash_arbitration
-        return self._softmax
+        return self.softmax_arbitration
     
-    def update_weights(self, utilities: Dict[str, float]) -> Dict[str, float]:
-        """
-        Update arbitration weights using dynamic update rules.
-        
-        Args:
-            utilities: Current goal utilities
-            
-        Returns:
-            Updated arbitration weights
-        """
+    def update_weights(self, utilities: Dict[str, float], current_weights: Optional[Dict[str, float]] = None) -> Dict[str, float]:
+        """Update arbitration weights using stochastic dynamics."""
         if not utilities:
             return {}
+            
+        # Initialize or update current weights
+        if current_weights is None:
+            current_weights = self.current_weights.copy()
+            
+        # Ensure all goals have an entry in utilities
+        for goal_name in current_weights:
+            if goal_name not in utilities:
+                utilities[goal_name] = 0.0  # Default utility for missing goals
+                
+        # Get effective temperature for this update
+        temp = self.get_effective_temperature(utilities)
         
-        # Get current weights (or initialize if first update)
-        current_weights = self.weight_history[-1] if self.weight_history else {
-            k: 1.0/len(utilities) for k in utilities
-        }
-        
-        # Get arbitration rule
-        arbitration_fn = self.get_arbitration_rule()
-        
+        # Define arbitration function with temperature
+        def arbitration_fn(weights):
+            return self.softmax_arbitration(utilities)
+            
         # Update weights using dynamic system
         new_weights = self.dynamic_system.update(
             current_weights=current_weights,
@@ -124,50 +128,33 @@ class ArbitrationEngine:
             arbitration_fn=arbitration_fn
         )
         
-        # Record history
-        self.weight_history.append(new_weights)
-        self.utility_history.append(utilities)
-        
+        # Store updated weights
+        self.current_weights = new_weights
         return new_weights
     
     def get_stability_metrics(self) -> Dict[str, float]:
-        """Get stability metrics from the dynamic system."""
-        return self.dynamic_system.get_stability_metrics()
+        """Get stability metrics including temperature effects."""
+        metrics = self.dynamic_system.get_stability_metrics()
+        if self.current_weights:
+            metrics['temperature'] = self.get_effective_temperature(self.current_weights)
+        return metrics
     
     def get_lipschitz_bound(self) -> float:
-        """Get Lipschitz bound from the dynamic system."""
+        """Get Lipschitz bound considering temperature effects."""
         return self.dynamic_system.get_lipschitz_bound()
     
-    def detect_conflicts(self, threshold: float = 0.3) -> List[tuple]:
-        """
-        Detect potential conflicts between goals based on utility patterns.
-        
-        Args:
-            threshold: Minimum correlation threshold for conflict detection
-            
-        Returns:
-            List of (goal1, goal2) pairs that may be in conflict
-        """
-        if len(self.utility_history) < 2:
+    def detect_conflicts(self) -> List[tuple]:
+        """Detect potential conflicts between goals."""
+        if not self.current_weights:
             return []
-        
+            
         conflicts = []
-        goals = list(self.utility_history[0].keys())
+        goals = list(self.current_weights.keys())
         
-        # Compute utility correlations
-        for i in range(len(goals)):
-            for j in range(i+1, len(goals)):
-                g1, g2 = goals[i], goals[j]
-                
-                # Get utility histories
-                u1 = [h[g1] for h in self.utility_history]
-                u2 = [h[g2] for h in self.utility_history]
-                
-                # Compute correlation
-                corr = np.corrcoef(u1, u2)[0,1]
-                
-                # If strong negative correlation, potential conflict
-                if corr < -threshold:
+        for i, g1 in enumerate(goals):
+            for g2 in goals[i+1:]:
+                # Check for negative correlation in weights
+                if self.current_weights[g1] * self.current_weights[g2] < 0:
                     conflicts.append((g1, g2))
-        
+                    
         return conflicts 

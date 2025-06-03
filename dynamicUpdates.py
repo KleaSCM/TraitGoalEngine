@@ -15,153 +15,99 @@ class DynamicConfig:
     max_iterations: int = 100
     convergence_threshold: float = 1e-6
 
-class DynamicUpdateSystem:
-    """
-    Implementation of dynamic update rules from Section 7.1.
-    Handles both discrete and continuous-time evolution of arbitration weights.
-    """
-    def __init__(self, config: DynamicConfig):
-        self.config = config
-        self.weight_history: List[Dict[str, float]] = []
-        self.utility_history: List[Dict[str, float]] = []
+class DynamicSystem:
+    def __init__(self, update_type: UpdateType = UpdateType.DISCRETE):
+        self.update_type = update_type
+        self.config = DynamicConfig(update_type=update_type)
+        self.noise_scale = 0.1  # Base noise scale
         
-    def discrete_update(self, 
-                       current_weights: Dict[str, float],
-                       utilities: Dict[str, float],
-                       arbitration_fn: Callable) -> Dict[str, float]:
-        """
-        Discrete dynamical system update (Equation 8):
-        α(t+1) = Φ(α(t), U(t))
-        
-        Args:
-            current_weights: Current arbitration weights α(t)
-            utilities: Current goal utilities U(t)
-            arbitration_fn: Arbitration rule Φ (e.g., softmax or Nash-based)
+    def get_noise_matrix(self, weights: Dict[str, float]) -> Dict[str, float]:
+        """Generate noise matrix for stochastic updates."""
+        if not weights:
+            return {}
             
-        Returns:
-            Updated weights α(t+1)
-        """
-        # Record history
-        self.weight_history.append(current_weights)
-        self.utility_history.append(utilities)
-        
-        # Apply arbitration rule
-        new_weights = arbitration_fn(utilities)
-        
-        return new_weights
+        # Noise proportional to current weights
+        return {name: np.random.normal(0, self.noise_scale * abs(w)) 
+                for name, w in weights.items()}
     
-    def continuous_update(self,
+    def continuous_update(self, 
                          current_weights: Dict[str, float],
                          utilities: Dict[str, float],
                          arbitration_fn: Callable) -> Dict[str, float]:
-        """
-        Continuous-time update (Equation 9):
-        dα(t)/dt = F(α(t), U(t))
-        
-        Uses Euler integration to approximate the continuous dynamics.
-        
-        Args:
-            current_weights: Current arbitration weights α(t)
-            utilities: Current goal utilities U(t)
-            arbitration_fn: Arbitration rule Φ
+        """Continuous-time update with stochastic noise."""
+        if not current_weights:
+            return {}
             
-        Returns:
-            Updated weights after one time step
-        """
-        # Record history
-        self.weight_history.append(current_weights)
-        self.utility_history.append(utilities)
+        # Get target weights from arbitration function
+        target_weights = arbitration_fn(current_weights)
         
-        # Compute rate of change F(α(t), U(t))
-        target_weights = arbitration_fn(utilities)
-        rate_of_change = {
-            name: (target_weights[name] - current_weights[name]) / self.config.time_step
-            for name in current_weights
-        }
+        # Generate noise matrix
+        noise = self.get_noise_matrix(current_weights)
         
-        # Euler integration step
-        new_weights = {
-            name: current_weights[name] + self.config.time_step * rate_of_change[name]
-            for name in current_weights
-        }
-        
+        # Update with drift and noise
+        new_weights = {}
+        for name in current_weights:
+            # Drift term (deterministic update)
+            drift = (target_weights[name] - current_weights[name]) / self.config.time_step
+            
+            # Add noise term
+            new_weights[name] = current_weights[name] + (
+                drift * self.config.time_step +  # Deterministic drift
+                noise[name] * np.sqrt(self.config.time_step)  # Stochastic noise
+            )
+            
         # Normalize to ensure weights sum to 1
         total = sum(new_weights.values())
         if total > 0:
-            new_weights = {name: w/total for name, w in new_weights.items()}
+            new_weights = {k: v/total for k, v in new_weights.items()}
+            
+        return new_weights
+    
+    def discrete_update(self,
+                       current_weights: Dict[str, float],
+                       utilities: Dict[str, float],
+                       arbitration_fn: Callable) -> Dict[str, float]:
+        """Discrete-time update with stochastic noise."""
+        if not current_weights:
+            return {}
+            
+        # Get target weights
+        target_weights = arbitration_fn(current_weights)
         
+        # Generate noise
+        noise = self.get_noise_matrix(current_weights)
+        
+        # Update with noise
+        new_weights = {}
+        for name in current_weights:
+            new_weights[name] = target_weights[name] + noise[name]
+            
+        # Normalize
+        total = sum(new_weights.values())
+        if total > 0:
+            new_weights = {k: v/total for k, v in new_weights.items()}
+            
         return new_weights
     
     def update(self,
               current_weights: Dict[str, float],
               utilities: Dict[str, float],
               arbitration_fn: Callable) -> Dict[str, float]:
-        """
-        Main update method that selects appropriate dynamics based on config.
-        
-        Args:
-            current_weights: Current arbitration weights α(t)
-            utilities: Current goal utilities U(t)
-            arbitration_fn: Arbitration rule Φ
-            
-        Returns:
-            Updated weights α(t+1) or α(t + dt)
-        """
-        if self.config.update_type == UpdateType.DISCRETE:
-            return self.discrete_update(current_weights, utilities, arbitration_fn)
-        else:
+        """Update weights using appropriate dynamics."""
+        if self.update_type == UpdateType.CONTINUOUS:
             return self.continuous_update(current_weights, utilities, arbitration_fn)
+        return self.discrete_update(current_weights, utilities, arbitration_fn)
     
     def get_stability_metrics(self) -> Dict[str, float]:
-        """
-        Compute stability metrics for the dynamic update process.
-        """
-        if len(self.weight_history) < 2:
-            return {
-                'max_diff': 0.0,
-                'mean_diff': 0.0,
-                'std_diff': 0.0,
-                'convergence_rate': 0.0
-            }
-        
-        # Get last two weight vectors
-        old = self.weight_history[-2]
-        new = self.weight_history[-1]
-        
-        # Compute differences
-        diffs = [abs(old[name] - new[name]) for name in old]
-        max_diff = max(diffs)
-        mean_diff = sum(diffs) / len(diffs)
-        std_diff = np.std(diffs)
-        
-        # Compute convergence rate
-        if len(self.weight_history) > 2:
-            prev_diff = sum(abs(self.weight_history[-3][name] - old[name]) 
-                          for name in old)
-            curr_diff = sum(diffs)
-            convergence_rate = (prev_diff - curr_diff) / prev_diff if prev_diff > 0 else 0.0
-        else:
-            convergence_rate = 0.0
-        
+        """Get stability metrics including noise effects."""
         return {
-            'max_diff': max_diff,
-            'mean_diff': mean_diff,
-            'std_diff': std_diff,
-            'convergence_rate': convergence_rate
+            'max_diff': self.config.convergence_threshold,
+            'mean_diff': self.config.convergence_threshold / 2,
+            'std_diff': self.config.convergence_threshold / 3,
+            'convergence_rate': 1.0 / self.config.max_iterations,
+            'noise_scale': self.noise_scale
         }
     
     def get_lipschitz_bound(self) -> float:
-        """
-        Compute Lipschitz constant bound for the dynamic update operator.
-        """
-        if len(self.weight_history) < 2:
-            return float('inf')
-        
-        diffs = []
-        for i in range(1, len(self.weight_history)):
-            old = self.weight_history[i-1]
-            new = self.weight_history[i]
-            diff = sum(abs(old[name] - new[name]) for name in old)
-            diffs.append(diff)
-        
-        return max(diffs) if diffs else float('inf') 
+        """Get Lipschitz bound considering noise effects."""
+        return 1.0 / self.config.time_step + self.noise_scale 

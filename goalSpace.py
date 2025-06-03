@@ -1,4 +1,4 @@
-from typing import Dict, List, Set, Optional, Tuple, Callable
+from typing import Dict, List, Set, Optional, Tuple, Callable, Any
 from dataclasses import dataclass
 import numpy as np
 from enum import Enum
@@ -22,8 +22,12 @@ class Goal:
     priority: float  # Static priority p(g) from Definition 7
     dependencies: Set[str]  # Goal Dependency Partial Order ⪯ from Definition 4
     utility_fn: Optional[Callable[[Dict[str, float], Dict[str, float]], float]] = None  # Recursive utility function
-    status: GoalStatus = GoalStatus.PENDING
+    status: GoalStatus = GoalStatus.ACTIVE
     progress: float = 0.0
+    satisfaction_threshold: float = 0.8
+    utility: float = 0.5  # Initial utility
+    reversion_rate: float = 0.1  # Mean reversion rate
+    noise_scale: float = 0.05  # Noise scale for utility process
     urgency: float = 0.0  # Time-dependent urgency u(g,t) from Definition 8
     description: str = ""
     linked_traits: List[str] = None
@@ -35,6 +39,19 @@ class Goal:
         w(g,t) = p(g) · u(g,t)
         """
         return self.priority * self.urgency
+
+    def update_utility(self, trait_values: Dict[str, float]) -> float:
+        """Update utility using mean-reverting process."""
+        # Calculate target utility based on trait values
+        target_utility = self.priority * (0.5 + 0.5 * self.progress)
+        
+        # Mean-reverting update with noise
+        noise = np.random.normal(0, self.noise_scale)
+        self.utility = self.utility + self.reversion_rate * (target_utility - self.utility) + noise
+        
+        # Clamp utility to [0, 1]
+        self.utility = max(0.0, min(1.0, self.utility))
+        return self.utility
 
 class GoalSpace:
     """
@@ -51,6 +68,9 @@ class GoalSpace:
             temperature=temperature,
             update_type=update_type
         )
+        self.utility_history: List[Dict[str, float]] = []
+        self.weight_history: List[Dict[str, float]] = []
+        self.temperature = temperature  # Base temperature for softmax
     
     def add_goal(self, goal: Goal, dependencies: Optional[List[str]] = None):
         """
@@ -66,6 +86,19 @@ class GoalSpace:
             self.dependencies[goal.name] = set()
         
         self.goals[goal.name] = goal
+        
+        # Initialize weights for the new goal
+        if not self.arbitration_engine.current_weights:
+            self.arbitration_engine.current_weights = {}
+        self.arbitration_engine.current_weights[goal.name] = 1.0 / (len(self.goals) + 1)  # Equal initial weight
+        
+        # Normalize all weights
+        total = sum(self.arbitration_engine.current_weights.values())
+        if total > 0:
+            self.arbitration_engine.current_weights = {
+                name: weight / total 
+                for name, weight in self.arbitration_engine.current_weights.items()
+            }
     
     def _has_cycle(self, start: str) -> bool:
         """Check if adding a goal would create a cycle in the dependency graph."""
@@ -112,59 +145,119 @@ class GoalSpace:
         # Default utility based on progress and priority
         return goal.priority * (0.5 + 0.5 * goal.progress)  # Add base utility of 0.5
     
-    def evaluate_all_utilities(self) -> Dict[str, float]:
-        """
-        Evaluate utilities for all goals using fixed-point iteration.
-        """
+    def evaluate_all_utilities(self, trait_values: Dict[str, float]) -> Dict[str, float]:
+        """Evaluate utilities for all goals using fixed-point iteration."""
+        if not self.goals:
+            return {}
+            
+        # Update utilities for all goals
         utilities = {}
-        max_iterations = 100
-        convergence_threshold = 1e-6
-        
-        # Initialize utilities
-        for name in self.goals:
-            utilities[name] = self.get_utility(name)
-        
-        # Fixed-point iteration
-        for _ in range(max_iterations):
-            old_utilities = utilities.copy()
+        for goal in self.goals.values():
+            utilities[goal.name] = goal.update_utility(trait_values)
             
-            # Update utilities
-            for name in self.goals:
-                utilities[name] = self.get_utility(name)
-            
-            # Check convergence
-            max_diff = max(abs(utilities[name] - old_utilities[name])
-                          for name in utilities)
-            if max_diff < convergence_threshold:
-                break
-        
+        # Record utility history
+        self.utility_history.append(utilities)
         return utilities
     
-    def arbitrate_goals(self) -> Dict[str, float]:
+    def arbitrate_goals(self, trait_values: Optional[Dict[str, float]] = None) -> Dict[str, float]:
         """
         Update arbitration weights based on current utilities.
+        
+        Args:
+            trait_values: Optional dictionary of trait values. If not provided,
+                         will use default values of 0.5 for all traits.
         """
-        utilities = self.evaluate_all_utilities()
+        if trait_values is None:
+            # Get trait values from goals' linked traits
+            trait_values = {}
+            for goal in self.goals.values():
+                if goal.linked_traits:
+                    for trait in goal.linked_traits:
+                        if trait not in trait_values:
+                            trait_values[trait] = 0.5  # Default trait value
+        
+        utilities = self.evaluate_all_utilities(trait_values)
         return self.arbitration_engine.update_weights(utilities)
     
-    def update_goal_progress(self, goal_name: str, delta: float):
-        """
-        Update progress for a goal and check satisfaction.
-        """
+    def update_goal_progress(self, goal_name: str, progress_delta: float) -> None:
+        """Update progress for a goal."""
         if goal_name in self.goals:
             goal = self.goals[goal_name]
-            goal.progress = max(0.0, min(1.0, goal.progress + delta))
+            goal.progress = max(0.0, min(1.0, goal.progress + progress_delta))
             
-            if goal.progress >= 1.0:
+            # Update status if threshold reached
+            if goal.progress >= goal.satisfaction_threshold:
                 goal.status = GoalStatus.SATISFIED
     
+    def get_effective_temperature(self) -> float:
+        """Calculate effective temperature based on utility variance."""
+        if not self.utility_history:
+            return self.temperature
+            
+        # Calculate variance of utilities
+        recent_utilities = self.utility_history[-10:]  # Look at last 10 steps
+        if not recent_utilities:
+            return self.temperature
+            
+        # Compute variance across all goals
+        all_utilities = []
+        for util_dict in recent_utilities:
+            all_utilities.extend(util_dict.values())
+            
+        variance = np.var(all_utilities) if all_utilities else 0.0
+        
+        # Temperature increases with variance
+        return self.temperature * (1.0 + variance)
+    
     def get_stability_metrics(self) -> Dict[str, float]:
-        """Get stability metrics from the arbitration engine."""
-        return self.arbitration_engine.get_stability_metrics()
+        """Get stability metrics for the goal space."""
+        if len(self.utility_history) < 2:
+            return {
+                'max_diff': 0.0,
+                'mean_diff': 0.0,
+                'std_diff': 0.0,
+                'convergence_rate': 0.0
+            }
+            
+        # Get last two utility vectors
+        old = self.utility_history[-2]
+        new = self.utility_history[-1]
+        
+        # Compute differences
+        diffs = [abs(old[name] - new[name]) for name in old]
+        max_diff = max(diffs)
+        mean_diff = sum(diffs) / len(diffs)
+        std_diff = np.std(diffs)
+        
+        # Compute convergence rate
+        if len(self.utility_history) > 2:
+            prev_diff = sum(abs(self.utility_history[-3][name] - old[name]) 
+                          for name in old)
+            curr_diff = sum(diffs)
+            convergence_rate = (prev_diff - curr_diff) / prev_diff if prev_diff > 0 else 0.0
+        else:
+            convergence_rate = 0.0
+            
+        return {
+            'max_diff': max_diff,
+            'mean_diff': mean_diff,
+            'std_diff': std_diff,
+            'convergence_rate': convergence_rate
+        }
     
     def get_lipschitz_bound(self) -> float:
-        """Get Lipschitz bound from the arbitration engine."""
-        return self.arbitration_engine.get_lipschitz_bound()
+        """Get Lipschitz bound for the goal space."""
+        if len(self.utility_history) < 2:
+            return float('inf')
+            
+        diffs = []
+        for i in range(1, len(self.utility_history)):
+            old = self.utility_history[i-1]
+            new = self.utility_history[i]
+            diff = sum(abs(old[name] - new[name]) for name in old)
+            diffs.append(diff)
+            
+        return max(diffs) if diffs else float('inf')
     
     def detect_conflicts(self) -> List[tuple]:
         """Detect potential conflicts between goals."""
