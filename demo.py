@@ -71,6 +71,10 @@ def generate_goal_from_traits(trait_name: str, trait_data: Dict[str, Any]) -> Go
     decisiveness = trait_data.get('decisiveness', 0.5)
     effective_temp = 1.0 / (resilience * decisiveness)  # Temperature modulation
     
+    # Get linked traits and their influences
+    linked_traits = trait_data.get('links', [])
+    trait_weights = {link: 0.3 for link in linked_traits}  # Base coupling coefficient
+    
     # Create utility function that depends on linked traits
     def trait_utility(dep_utilities):
         # Base utility from trait value
@@ -78,18 +82,20 @@ def generate_goal_from_traits(trait_name: str, trait_data: Dict[str, Any]) -> Go
         
         # Add influence from linked traits
         linked_influence = 0.0
-        for linked_trait in trait_data.get('links', []):
+        for linked_trait in linked_traits:
             linked_utility = dep_utilities.get(f"{linked_trait}_goal", 0.0)
-            linked_influence += 0.3 * linked_utility  # Coupling coefficient
+            weight = trait_weights.get(linked_trait, 0.3)
+            linked_influence += weight * linked_utility
         
-        # Mean-reverting utility process
+        # Mean-reverting utility process with trait-specific parameters
         mean_utility = base_utility + linked_influence
-        reversion_rate = 0.1  # λ parameter
+        reversion_rate = 0.1 * trait_data.get('stability', 0.5)  # Stability affects reversion
         current_utility = getattr(trait_utility, 'last_utility', mean_utility)
         new_utility = mean_utility + reversion_rate * (current_utility - mean_utility)
         
-        # Add noise proportional to temperature
-        noise = np.random.normal(0, 0.1 * effective_temp)
+        # Add noise proportional to temperature and trait stability
+        noise_scale = 0.1 * effective_temp * (1 - trait_data.get('stability', 0.5))
+        noise = np.random.normal(0, noise_scale)
         trait_utility.last_utility = new_utility + noise
         
         return trait_utility.last_utility
@@ -101,7 +107,8 @@ def generate_goal_from_traits(trait_name: str, trait_data: Dict[str, Any]) -> Go
         'valence': trait_data.get('valence', 0.0),
         'resilience': resilience,
         'decisiveness': decisiveness,
-        'temperature': effective_temp
+        'temperature': effective_temp,
+        'linked_trait_weights': trait_weights  # Store weights for linked traits
     }
     
     # Create goal with trait-based properties
@@ -109,10 +116,10 @@ def generate_goal_from_traits(trait_name: str, trait_data: Dict[str, Any]) -> Go
         name=f"{trait_name}_goal",
         attributes=attributes,
         priority=trait_data.get('value', 0.5),  # Priority based on trait value
-        dependencies=set(trait_data.get('links', [])),  # Dependencies from trait links
+        dependencies=set(linked_traits),  # Dependencies from trait links
         utility_fn=trait_utility,
         description=f"Develop and strengthen {trait_name} through focused practice and reflection",
-        linked_traits=[trait_name] + trait_data.get('links', []),
+        linked_traits=[trait_name] + linked_traits,  # Include both primary and linked traits
         status=GoalStatus.ACTIVE  # Set initial status to ACTIVE
     )
 
@@ -185,12 +192,37 @@ def main():
                 # Update progress for each active goal
                 for goal in goal_space.goals.values():
                     if goal.status == GoalStatus.ACTIVE:
-                        # Calculate progress based on weights and utilities
+                        # Calculate base progress from weights and utilities
                         base_progress = weights[goal.name] * utilities[goal.name]
-                        random_factor = 0.1 * (random.random() - 0.5)  # Add some randomness
-                        progress_delta = (base_progress + random_factor) * 0.2
                         
-                        goal_space.update_goal_progress(goal.name, progress_delta)
+                        # Add influence from linked traits
+                        trait_influence = 0.0
+                        for linked_trait in goal.linked_traits:
+                            if linked_trait in trait_values:
+                                trait_value = trait_values[linked_trait]
+                                weight = goal.attributes.get('linked_trait_weights', {}).get(linked_trait, 0.3)
+                                trait_influence += weight * trait_value
+                        
+                        # Combine base progress with trait influence
+                        combined_progress = base_progress * (1 + trait_influence)
+                        
+                        # Add randomness scaled by trait stability
+                        stability = goal.attributes.get('stability', 0.5)
+                        random_factor = 0.1 * (random.random() - 0.5) * (1 - stability)
+                        
+                        # Calculate final progress delta
+                        progress_delta = (combined_progress + random_factor) * 0.2
+                        
+                        # Update goal progress
+                        goal_space.update_goal_progress(goal.name, progress_delta, trait_values)
+                        
+                        # Update trait values based on goal progress
+                        for linked_trait in goal.linked_traits:
+                            if linked_trait in trait_engine.traits:
+                                trait_data = trait_engine.traits[linked_trait]
+                                weight = goal.attributes.get('linked_trait_weights', {}).get(linked_trait, 0.3)
+                                trait_influence = progress_delta * weight
+                                trait_data['value'] = min(1.0, max(0.0, trait_data['value'] + trait_influence))
                         
                         # Check for completion
                         if goal.progress >= 0.8:  # Changed from 1.0 to 0.8 to match satisfaction threshold

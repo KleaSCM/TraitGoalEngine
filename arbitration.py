@@ -41,7 +41,7 @@ class ArbitrationEngine:
         self.update_type = update_type
         self.current_weights = {}
         self.dynamic_system = DynamicSystem(update_type)
-        self.config = DynamicConfig(update_type=update_type)
+        self.config = DynamicConfig(update_type=update_type, temperature=temperature)
     
     def get_effective_temperature(self, utilities: Dict[str, float]) -> float:
         """Calculate effective temperature based on utility variance."""
@@ -53,25 +53,28 @@ class ArbitrationEngine:
         variance = np.var(utility_values) if len(utility_values) > 1 else 0
         return self.base_temperature * (1.0 + variance)
     
-    def softmax_arbitration(self, utilities: Dict[str, float]) -> Dict[str, float]:
-        """Softmax arbitration with temperature modulation."""
+    def softmax_arbitration(self, utilities: Dict[str, float], temperature: float = 1.0) -> Dict[str, float]:
+        """
+        Apply softmax with temperature modulation to utilities.
+        Temperature is modulated by trait states (resilience and decisiveness).
+        """
         if not utilities:
             return {}
-            
-        # Get effective temperature
-        temp = self.get_effective_temperature(utilities)
         
-        # Apply softmax with temperature
-        max_utility = max(utilities.values())
-        exps = {k: math.exp((v - max_utility) / temp) for k, v in utilities.items()}
+        # Apply temperature scaling
+        scaled_utilities = {k: v / temperature for k, v in utilities.items()}
+        
+        # Compute softmax
+        max_util = max(scaled_utilities.values())
+        exps = {k: math.exp(v - max_util) for k, v in scaled_utilities.items()}
         total = sum(exps.values())
         
         if total == 0:
-            # Fallback to uniform distribution
+            # Avoid division by zero; fallback to uniform distribution
             n = len(utilities)
             return {k: 1/n for k in utilities}
-            
-        return {k: v/total for k, v in exps.items()}
+        
+        return {k: v / total for k, v in exps.items()}
     
     def _nash_arbitration(self, utilities: Dict[str, float]) -> Dict[str, float]:
         """
@@ -100,36 +103,49 @@ class ArbitrationEngine:
             return self._nash_arbitration
         return self.softmax_arbitration
     
-    def update_weights(self, utilities: Dict[str, float], current_weights: Optional[Dict[str, float]] = None) -> Dict[str, float]:
-        """Update arbitration weights using stochastic dynamics."""
+    def update_weights(self, utilities: Dict[str, float]) -> Dict[str, float]:
+        """
+        Update weights based on utilities and trait states.
+        Implements a continuous-time weight update process.
+        """
         if not utilities:
             return {}
-            
+        
         # Initialize or update current weights
-        if current_weights is None:
-            current_weights = self.current_weights.copy()
-            
-        # Ensure all goals have an entry in utilities
-        for goal_name in current_weights:
-            if goal_name not in utilities:
-                utilities[goal_name] = 0.0  # Default utility for missing goals
+        if not self.current_weights:
+            # First time: initialize with uniform distribution
+            n = len(utilities)
+            self.current_weights = {k: 1/n for k in utilities}
+        else:
+            # Ensure all goals have an entry in utilities
+            for goal_name in self.current_weights:
+                if goal_name not in utilities:
+                    utilities[goal_name] = 0.0  # Default utility for missing goals
+        
+        # Calculate weight updates using continuous-time dynamics
+        new_weights = {}
+        total_utility = sum(utilities.values())
+        
+        if total_utility > 0:
+            for goal_name, utility in utilities.items():
+                current_weight = self.current_weights.get(goal_name, 0.0)
+                target_weight = utility / total_utility
                 
-        # Get effective temperature for this update
-        temp = self.get_effective_temperature(utilities)
+                # Continuous-time update with trait modulation
+                weight_delta = 0.1 * (target_weight - current_weight)  # Learning rate
+                new_weights[goal_name] = max(0.0, min(1.0, current_weight + weight_delta))
+        else:
+            # If no utility, maintain current weights
+            new_weights = self.current_weights.copy()
         
-        # Define arbitration function with temperature
-        def arbitration_fn(weights):
-            return self.softmax_arbitration(utilities)
-            
-        # Update weights using dynamic system
-        new_weights = self.dynamic_system.update(
-            current_weights=current_weights,
-            utilities=utilities,
-            arbitration_fn=arbitration_fn
-        )
+        # Normalize weights
+        total_weight = sum(new_weights.values())
+        if total_weight > 0:
+            new_weights = {k: v/total_weight for k, v in new_weights.items()}
         
-        # Store updated weights
+        # Update current weights
         self.current_weights = new_weights
+        
         return new_weights
     
     def get_stability_metrics(self) -> Dict[str, float]:

@@ -14,6 +14,7 @@ class DynamicConfig:
     time_step: float = 0.1  # For continuous updates
     max_iterations: int = 100
     convergence_threshold: float = 1e-6
+    temperature: float = 1.0  # For softmax temperature modulation
 
 class DynamicSystem:
     def __init__(self, update_type: UpdateType = UpdateType.DISCRETE):

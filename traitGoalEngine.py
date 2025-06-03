@@ -27,6 +27,7 @@ def update_trait_values(traits_dict: Dict[str, Dict[str, Any]],
     """
     updated_values = {}
     
+    # First pass: calculate direct goal influences
     for trait_name, trait_data in traits_dict.items():
         # Get current base value
         current_value = trait_data.get('value', 0.0)
@@ -38,12 +39,12 @@ def update_trait_values(traits_dict: Dict[str, Dict[str, Any]],
                 influence = trait_data['goal_influence'][goal]
                 goal_influence += influence * progress
         
-        # Calculate coupling influence
+        # Calculate coupling influence from linked traits
         coupling_influence = 0.0
         for linked_trait in trait_data.get('links', []):
             if linked_trait in traits_dict:
                 linked_value = traits_dict[linked_trait].get('value', 0.0)
-                coupling_influence += 0.3 * linked_value  # Coupling coefficient
+                coupling_influence += 0.3 * linked_value  # Base coupling coefficient
         
         # Update value with learning and coupling
         new_value = current_value + learning_rate * (
@@ -54,6 +55,15 @@ def update_trait_values(traits_dict: Dict[str, Dict[str, Any]],
         
         # Ensure value stays in [0,1]
         updated_values[trait_name] = max(0.0, min(1.0, new_value))
+    
+    # Second pass: apply trait coupling
+    coupling_matrix = {}
+    for name, data in traits_dict.items():
+        if "links" in data:
+            coupling_matrix[name] = {link: 0.3 for link in data["links"]}
+    
+    if coupling_matrix:
+        updated_values = apply_trait_coupling(updated_values, coupling_matrix)
     
     return updated_values
 
@@ -111,6 +121,7 @@ def apply_trait_coupling(trait_vals: Dict[str, float], coupling: Dict[str, Dict[
         influence_sum = trait_vals[t1]
         for t2, coeff in coupling.get(t1, {}).items():
             if t2 in trait_vals:
+                # Add influence from linked trait, scaled by coupling coefficient
                 influence_sum += coeff * trait_vals[t2]
         # Reapply sigmoid to resaturate
         coupled[t1] = sigmoid(influence_sum)

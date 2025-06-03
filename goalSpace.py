@@ -146,68 +146,99 @@ class GoalSpace:
         return goal.priority * (0.5 + 0.5 * goal.progress)  # Add base utility of 0.5
     
     def evaluate_all_utilities(self, trait_values: Dict[str, float]) -> Dict[str, float]:
-        """Evaluate utilities for all goals using fixed-point iteration."""
+        """
+        Evaluate utilities for all goals, taking into account trait dependencies.
+        """
         if not self.goals:
             return {}
-            
-        # Update utilities for all goals
+        
         utilities = {}
-        for goal in self.goals.values():
-            utilities[goal.name] = goal.update_utility(trait_values)
+        for goal_name, goal in self.goals.items():
+            # Get base utility from goal's utility function
+            base_utility = goal.utility_fn({})
             
-        # Record utility history
-        self.utility_history.append(utilities)
+            # Add influence from linked traits
+            trait_influence = 0.0
+            for trait_name in goal.linked_traits:
+                if trait_name in trait_values:
+                    trait_value = trait_values[trait_name]
+                    weight = goal.attributes.get('linked_trait_weights', {}).get(trait_name, 0.3)
+                    trait_influence += weight * trait_value
+            
+            # Combine base utility with trait influence
+            utilities[goal_name] = base_utility * (1 + trait_influence)
+        
         return utilities
     
     def arbitrate_goals(self, trait_values: Optional[Dict[str, float]] = None) -> Dict[str, float]:
         """
-        Update arbitration weights based on current utilities.
+        Arbitrate between goals using trait-modulated softmax.
+        """
+        if not self.goals:
+            return {}
+        
+        # Get utilities for all goals
+        utilities = self.evaluate_all_utilities(trait_values)
+        
+        # Calculate effective temperature based on trait states
+        effective_temp = self.get_effective_temperature()
+        
+        # Apply softmax with temperature modulation
+        weights = self.arbitration_engine.softmax_arbitration(utilities, effective_temp)
+        
+        # Update current weights
+        self.arbitration_engine.update_weights(utilities)
+        
+        return weights
+    
+    def update_goal_progress(self, goal_name: str, progress_delta: float, trait_values: Optional[Dict[str, float]] = None) -> None:
+        """
+        Update goal progress and handle trait interactions.
         
         Args:
-            trait_values: Optional dictionary of trait values. If not provided,
-                         will use default values of 0.5 for all traits.
+            goal_name: Name of the goal to update
+            progress_delta: Amount to change progress by
+            trait_values: Optional dictionary of trait values. If None, will use default values.
         """
-        if trait_values is None:
-            # Get trait values from goals' linked traits
-            trait_values = {}
-            for goal in self.goals.values():
-                if goal.linked_traits:
-                    for trait in goal.linked_traits:
-                        if trait not in trait_values:
-                            trait_values[trait] = 0.5  # Default trait value
+        if goal_name not in self.goals:
+            raise ValueError(f"Goal {goal_name} not found")
         
-        utilities = self.evaluate_all_utilities(trait_values)
-        return self.arbitration_engine.update_weights(utilities)
-    
-    def update_goal_progress(self, goal_name: str, progress_delta: float) -> None:
-        """Update progress for a goal."""
-        if goal_name in self.goals:
-            goal = self.goals[goal_name]
-            goal.progress = max(0.0, min(1.0, goal.progress + progress_delta))
-            
-            # Update status if threshold reached
-            if goal.progress >= goal.satisfaction_threshold:
-                goal.status = GoalStatus.SATISFIED
+        goal = self.goals[goal_name]
+        old_progress = goal.progress
+        
+        # Update goal progress
+        goal.progress = min(1.0, max(0.0, goal.progress + progress_delta))
+        
+        # Get trait values if not provided
+        if trait_values is None:
+            trait_values = {trait: 0.5 for trait in goal.linked_traits} if goal.linked_traits else {}
+        
+        # Update stability metrics
+        self.utility_history.append(self.evaluate_all_utilities(trait_values))
+        self.weight_history.append(self.arbitrate_goals(trait_values))
+        
+        # Check for goal completion
+        if goal.progress >= 0.8 and goal.status == GoalStatus.ACTIVE:
+            goal.status = GoalStatus.SATISFIED
     
     def get_effective_temperature(self) -> float:
-        """Calculate effective temperature based on utility variance."""
-        if not self.utility_history:
-            return self.temperature
-            
-        # Calculate variance of utilities
-        recent_utilities = self.utility_history[-10:]  # Look at last 10 steps
-        if not recent_utilities:
-            return self.temperature
-            
-        # Compute variance across all goals
-        all_utilities = []
-        for util_dict in recent_utilities:
-            all_utilities.extend(util_dict.values())
-            
-        variance = np.var(all_utilities) if all_utilities else 0.0
+        """
+        Calculate effective temperature based on trait states.
+        """
+        base_temp = self.arbitration_engine.config.temperature
         
-        # Temperature increases with variance
-        return self.temperature * (1.0 + variance)
+        # Get trait values for resilience and decisiveness
+        resilience = 0.5  # Default value
+        decisiveness = 0.5  # Default value
+        
+        for goal in self.goals.values():
+            if 'resilience' in goal.attributes:
+                resilience = max(resilience, goal.attributes['resilience'])
+            if 'decisiveness' in goal.attributes:
+                decisiveness = max(decisiveness, goal.attributes['decisiveness'])
+        
+        # Temperature is inversely proportional to resilience and decisiveness
+        return base_temp / (resilience * decisiveness)
     
     def get_stability_metrics(self) -> Dict[str, float]:
         """Get stability metrics for the goal space."""
