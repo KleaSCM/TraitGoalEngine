@@ -2,7 +2,7 @@
 
 ## Abstract
 
-This paper presents a comprehensive implementation of a continuous-time stochastic framework for modeling trait-goal dynamics with conflict resolution and stability-based arbitration. The system employs stochastic differential equations (SDEs) to model the evolution of goal utilities and weights, while incorporating trait modulation and Nash equilibrium-based conflict resolution. We demonstrate the effectiveness of this approach through extensive experimental results and stability analysis, showing significant improvements in goal management efficiency and conflict resolution.
+This Readme presents a comprehensive implementation of a continuous-time stochastic framework for modeling trait-goal dynamics with conflict resolution and stability-based arbitration. The system employs stochastic differential equations (SDEs) to model the evolution of goal utilities and weights, while incorporating trait modulation and Nash equilibrium-based conflict resolution. We demonstrate the effectiveness of this approach through extensive experimental results and stability analysis, showing significant improvements in goal management efficiency and conflict resolution.
 
 ## 1. Introduction
 
