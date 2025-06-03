@@ -16,11 +16,30 @@ def print_state(step: int, trait_state: np.ndarray, emotion_state: np.ndarray, d
     for i, emotion in enumerate(emotions):
         print(f"{emotion:10}: {emotion_state[i]:.3f}")
     
-    # Print traits
+    # Print traits with coupling information
     print("\nTraits:")
     print("-" * 40)
+    trait_evolution = profile_system.trait_evolution
     for i, (trait, weight) in enumerate(profile_system.trait_weights.items()):
+        # Get trait coupling information
+        stability = trait_evolution.state.stability[i]
+        learning_rate = trait_evolution.state.learning_rate[i]
+        
+        # Calculate average interaction strength
+        interaction_strength = np.mean(np.abs(trait_evolution.state.interaction_matrix[i]))
+        
+        # Calculate average emotion coupling
+        emotion_coupling = np.mean(np.abs(trait_evolution.state.coupling_strength[i, :profile_system.n_emotions]))
+        
+        # Calculate average desire coupling
+        desire_coupling = np.mean(np.abs(trait_evolution.state.coupling_strength[i, profile_system.n_emotions:]))
+        
         print(f"{trait:15}: {trait_state[i]:.3f}")
+        print(f"  Stability: {stability:.3f}")
+        print(f"  Learning Rate: {learning_rate:.3f}")
+        print(f"  Interaction Strength: {interaction_strength:.3f}")
+        print(f"  Emotion Coupling: {emotion_coupling:.3f}")
+        print(f"  Desire Coupling: {desire_coupling:.3f}")
     
     # Print active desires
     print("\nActive Desires:")
@@ -35,6 +54,16 @@ def print_state(step: int, trait_state: np.ndarray, emotion_state: np.ndarray, d
     print("-" * 40)
     for key, value in metrics.items():
         print(f"{key:20}: {value:.3f}")
+    
+    # Print trait interaction summary
+    print("\nTrait Interaction Summary:")
+    print("-" * 40)
+    interaction_matrix = trait_evolution.state.interaction_matrix
+    for i in range(len(interaction_matrix)):
+        strongest_interaction = np.argmax(np.abs(interaction_matrix[i]))
+        interaction_strength = interaction_matrix[i, strongest_interaction]
+        if abs(interaction_strength) > 0.1:  # Only show significant interactions
+            print(f"Trait {i+1} → Trait {strongest_interaction+1}: {interaction_strength:.3f}")
 
 def run_demo():
     """Run a demonstration of the emotional-trait-desire system with profile integration."""

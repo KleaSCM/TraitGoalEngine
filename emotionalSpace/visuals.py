@@ -14,7 +14,7 @@ def plot_system_evolution(
     
     plt.figure(figsize=(20, 15))
     
-    # Plot traits
+    # Plot traits with coupling visualization
     plt.subplot(4, 2, 1)
     for j in range(profile_system.n_traits):
         plt.plot(trait_history[:, j], label=f'Trait {j+1}')
@@ -23,8 +23,17 @@ def plot_system_evolution(
     plt.ylabel('Trait Value')
     plt.legend()
     
-    # Plot emotions
+    # Plot trait interaction matrix
     plt.subplot(4, 2, 2)
+    interaction_matrix = profile_system.trait_evolution.state.interaction_matrix
+    plt.imshow(interaction_matrix, cmap='coolwarm', aspect='auto')
+    plt.colorbar(label='Interaction Strength')
+    plt.title('Trait Interaction Matrix')
+    plt.xlabel('Trait Index')
+    plt.ylabel('Trait Index')
+    
+    # Plot emotions
+    plt.subplot(4, 2, 3)
     for j in range(profile_system.n_emotions):
         plt.plot(emotion_history[:, j], label=f'Emotion {j+1}')
     plt.title('Emotional Field Evolution (Profile-Influenced)')
@@ -32,8 +41,17 @@ def plot_system_evolution(
     plt.ylabel('Intensity')
     plt.legend()
     
+    # Plot trait-emotion coupling
+    plt.subplot(4, 2, 4)
+    coupling_matrix = profile_system.trait_evolution.state.coupling_strength[:, :profile_system.n_emotions]
+    plt.imshow(coupling_matrix, cmap='coolwarm', aspect='auto')
+    plt.colorbar(label='Coupling Strength')
+    plt.title('Trait-Emotion Coupling Matrix')
+    plt.xlabel('Emotion Index')
+    plt.ylabel('Trait Index')
+    
     # Plot desires with profile comparison
-    plt.subplot(4, 2, 3)
+    plt.subplot(4, 2, 5)
     for j in range(profile_system.n_desires):
         plt.plot(desire_history[:, j], label=f'Desire {j+1}')
     # Add horizontal lines for profile desire values
@@ -44,49 +62,30 @@ def plot_system_evolution(
     plt.ylabel('Desire Value')
     plt.legend()
     
-    # Plot profile metrics
-    plt.subplot(4, 2, 4)
-    for key, values in profile_metrics.items():
-        plt.plot(values, label=key.replace('_', ' ').title())
-    plt.title('Profile Alignment Metrics')
-    plt.xlabel('Time')
-    plt.ylabel('Alignment')
-    plt.legend()
-    
-    # Plot trait weights from profile
-    plt.subplot(4, 2, 5)
-    trait_weights = list(profile_system.trait_weights.values())
-    plt.bar(range(len(trait_weights)), trait_weights)
-    plt.title('Profile Trait Weights')
-    plt.xlabel('Trait Index')
-    plt.ylabel('Weight')
-    
-    # Plot emotion correlations from profile
+    # Plot trait-desire coupling
     plt.subplot(4, 2, 6)
-    emotion_correlations = [
-        np.mean(list(correlations.values()))
-        for correlations in profile_system.emotion_trait_correlations.values()
-    ]
-    plt.bar(range(len(emotion_correlations)), emotion_correlations)
-    plt.title('Profile Emotion Correlations')
-    plt.xlabel('Emotion Index')
-    plt.ylabel('Correlation')
+    desire_coupling = profile_system.trait_evolution.state.coupling_strength[:, profile_system.n_emotions:]
+    plt.imshow(desire_coupling, cmap='coolwarm', aspect='auto')
+    plt.colorbar(label='Coupling Strength')
+    plt.title('Trait-Desire Coupling Matrix')
+    plt.xlabel('Desire Index')
+    plt.ylabel('Trait Index')
     
-    # Plot desire importance from profile
+    # Plot trait stability
     plt.subplot(4, 2, 7)
-    desire_importance = [desire.importance for desire in PROFILE.desires]
-    plt.bar(range(len(desire_importance)), desire_importance)
-    plt.title('Profile Desire Importance')
-    plt.xlabel('Desire Index')
-    plt.ylabel('Importance')
+    stability = profile_system.trait_evolution.state.stability
+    plt.bar(range(len(stability)), stability)
+    plt.title('Trait Stability')
+    plt.xlabel('Trait Index')
+    plt.ylabel('Stability')
     
-    # Plot desire frequency from profile
+    # Plot trait learning rates
     plt.subplot(4, 2, 8)
-    desire_frequency = [desire.frequency for desire in PROFILE.desires]
-    plt.bar(range(len(desire_frequency)), desire_frequency)
-    plt.title('Profile Desire Frequency')
-    plt.xlabel('Desire Index')
-    plt.ylabel('Frequency')
+    learning_rates = profile_system.trait_evolution.state.learning_rate
+    plt.bar(range(len(learning_rates)), learning_rates)
+    plt.title('Trait Learning Rates')
+    plt.xlabel('Trait Index')
+    plt.ylabel('Learning Rate')
     
     plt.tight_layout()
     plt.show() 
